@@ -612,6 +612,7 @@ function targetFor(task: BoardTask): ChipTarget {
     workspaceId: state.context?.workspaceId ?? "",
     projectName: projectFor(task)?.name,
     columnName: columnNameFor(task),
+    comments: state.comments[task.id]?.items,
   };
 }
 

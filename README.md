@@ -8,14 +8,18 @@ Kaneo tasks inside OpenChamber: a rail panel that lists a board, an attach picke
 | Surface                     | How you reach it                            | What it does                                                                                                                       |
 | --------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Rail panel                  | the Kaneo icon on the right-hand rail       | the project's tasks in one list, search and status/priority/assignee/label filters, an in-place detail with a Start session footer |
-| Attach picker               | `+` next to the chat box                    | search the workspace, attach a task as a chip, start a session, or create one                                                      |
+| Attach picker               | `+` next to the chat box                    | search the workspace, preview the highlighted task, attach it as a chip, start a session, or create one                            |
 | `Kaneo Board` page          | Extension pages menu above the session list | every column side by side, drag and drop between columns, a List/Mine split and a detail overlay                                   |
 | `/kaneo GEN-4`              | the chat box                                | attaches that ticket as a chip without opening anything                                                                            |
 | Message and session actions | the `⋯` menu on a message or a session      | opens the picker with a title drafted from the text                                                                                |
 
 Every detail surface reads the same: status and priority, assignee, due date, labels, the description and the comment
-timeline, then one row of actions. A session started from any surface is remembered, so the task gets started,
-completed and failed status comments once you set an OpenChamber web URL in the integration settings.
+timeline, then one row of actions. The attach picker is the host's reference-picker shape: search, the task list on the
+left, a preview of the highlighted task on the right, and Attach in the footer. An attached chip carries the
+description and the comments, so the agent reads what the team already said.
+
+A session started from any surface is remembered, so the task gets started, completed and failed status comments once
+you set an OpenChamber web URL in the integration settings.
 
 ## Install
 

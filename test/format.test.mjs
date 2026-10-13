@@ -180,6 +180,55 @@ test("taskContext is the text the model reads from an attached chip", () => {
   assert.ok(context.indexOf("https://kaneo.example/x") < context.indexOf("It throws"));
 });
 
+test("taskContext carries the comment thread when the caller has it", () => {
+  const context = taskContext(
+    {
+      id: "t1",
+      projectId: "p1",
+      title: "Fix login",
+      number: 4,
+      description: "It throws on empty input.",
+      status: "to-do",
+      priority: "no-priority",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      ticketId: "GEN-4",
+      comments: [
+        {
+          id: "c1",
+          taskId: "t1",
+          userId: "u1",
+          content: "Looking\ninto it.",
+          createdAt: "2026-01-02T00:00:00.000Z",
+          updatedAt: "2026-01-02T00:00:00.000Z",
+          user: { name: "Michael" },
+        },
+      ],
+    },
+  );
+
+  assert.match(context, /Comments:/);
+  assert.match(context, /- Michael: Looking into it\./);
+});
+
+test("taskContext leaves comments out when there are none", () => {
+  const context = taskContext(
+    {
+      id: "t1",
+      projectId: "p1",
+      title: "Plain",
+      number: 1,
+      description: null,
+      status: "to-do",
+      priority: "no-priority",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+    { ticketId: "GEN-1" },
+  );
+  assert.doesNotMatch(context, /Comments:/);
+});
+
 test("relativeTimeOf buckets like the reference rows", () => {
   const now = Date.parse("2026-10-13T12:00:00.000Z");
   const ago = (ms) => new Date(now - ms).toISOString();

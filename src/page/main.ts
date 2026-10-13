@@ -128,6 +128,7 @@ function targetFor(task: BoardTask): ChipTarget {
     workspaceId: state.context?.workspaceId ?? "",
     projectName: state.project?.name,
     columnName: columnOf(task)?.name ?? columnLabel(task.status),
+    comments: state.comments[task.id]?.items,
   };
 }
 
@@ -706,6 +707,7 @@ function mineTarget(detail: { entry: MineEntry; task: TaskDetail }): ChipTarget 
     workspaceId: state.context?.workspaceId ?? "",
     projectName: detail.entry.projectName,
     columnName: detail.entry.statusName ?? columnLabel(detail.task.status),
+    comments: state.comments[detail.task.id]?.items,
   };
 }
 

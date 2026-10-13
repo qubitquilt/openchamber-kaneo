@@ -248,6 +248,90 @@ html, body {
 .dialog-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
 .dialog-foot { display: flex; gap: 6px; justify-content: flex-end; padding-top: 6px; }
 
+/* The attach picker: the reference picker's header, list + preview, footer. */
+.attach-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--oc-border);
+}
+.attach-head-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.attach-search { flex: 1; min-width: 160px; }
+.attach-project { min-width: 110px; }
+
+.attach-body { flex: 1; min-height: 0; display: flex; }
+.attach-split { flex: 1; min-height: 0; display: flex; }
+.attach-list {
+  flex: 5 1 0;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+}
+.attach-preview {
+  flex: 7 1 0;
+  min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--oc-border);
+  padding: 12px 4px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.attach-body.narrow .attach-list {
+  flex: 1 1 auto;
+  width: 100%;
+  padding-right: 0;
+}
+.attach-body.narrow .attach-preview {
+  flex: 1 1 auto;
+  width: 100%;
+  border-left: 0;
+  padding: 12px 0;
+}
+
+.picker-head { display: flex; align-items: center; gap: 8px; }
+.pick-note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--oc-border);
+  padding-top: 12px;
+}
+
+.attach-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--oc-border);
+}
+.attach-hint {
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--oc-muted);
+  font-size: 12px;
+}
+
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--oc-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .page {
   height: 100%;
   display: flex;

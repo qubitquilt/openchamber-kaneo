@@ -9,7 +9,9 @@ import {
   applyHostReady,
   mountBanner,
   mountButton,
+  mountCheckbox,
   mountEmpty,
+  mountMenu,
   mountSearchField,
   mountSelect,
   mountSpinner,
@@ -21,13 +23,18 @@ import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
-import { attachChip, startSessionForTask } from "../shared/attachments";
+import {
+  attachChip,
+  openInKaneo,
+  startSessionForTask,
+  type ChipTarget,
+} from "../shared/attachments";
+import { detailComments, detailDescription, detailMeta, type CommentState } from "../shared/detail";
 import { columnLabel, firstLine, priorityLabel, ticketIdOf } from "../shared/format";
 import { loadPreferences } from "../shared/preferences";
 import { installStyles } from "../shared/styles";
-import { kaneoWordmark } from "../shared/logo";
 import { renderTaskRow } from "../shared/list-row";
-import type { BoardTask, ProjectListItem } from "../shared/types";
+import type { BoardTask, Comment, ProjectListItem } from "../shared/types";
 import {
   NoWorkspaceError,
   bootstrap,
@@ -37,12 +44,13 @@ import {
 } from "../shared/workspace";
 
 /**
- * The picker behind the composer's + menu. It lists tasks from the selected
- * project, searches the workspace, and attaches the chosen one as a chip.
+ * The picker behind the composer's + menu, shaped like OpenChamber's reference
+ * picker: a search header, the workspace's tasks on the left and a preview of
+ * the highlighted one on the right, with Attach in the footer.
  *
  * Two entry paths share this page. The + menu arrives with no item; a message
- * or session action arrives with `ready.item`, and the page opens in create
- * mode with the item's text as the draft title and description.
+ * or session action arrives with `ready.item`, which opens create mode with the
+ * item's text as the draft title and description.
  */
 
 const root = document.querySelector<HTMLElement>("#root");
@@ -50,6 +58,8 @@ if (!root) throw new Error("Kaneo attach dialog is missing its #root element.");
 
 const client = createKaneoClient((input) => host.request(input));
 const TITLE_MAX = 200;
+/** Below this the dialog shows the list or the preview, never both. */
+const NARROW_WIDTH = 560;
 
 type Draft = {
   title: string;
@@ -62,19 +72,27 @@ interface State {
   connected: boolean;
   context: WorkspaceContext | null;
   project: ProjectListItem | null;
-  /** Every task in the selected project, grouped by column name. */
+  /** Every task in the selected project. */
   boardTasks: BoardTask[];
   columnNames: Record<string, string>;
   defaultStatus: string;
   /** Search hits, or null while the picker shows the plain board. */
   results: BoardTask[] | null;
   search: string;
+  /** Column slug filter, `""` for every column. */
+  statusFilter: string;
   tab: "board" | "create";
   loading: boolean;
   error: string | null;
   draft: Draft;
   /** The message or session that opened create mode, if any. */
   source: GuestMessageItem | GuestSessionItem | null;
+  highlightedId: string | null;
+  comments: Record<string, CommentState>;
+  worktree: boolean;
+  wide: boolean;
+  /** Narrow layout: whether the preview replaced the list. */
+  previewOpen: boolean;
 }
 
 const state: State = {
@@ -87,11 +105,17 @@ const state: State = {
   defaultStatus: "to-do",
   results: null,
   search: "",
+  statusFilter: "",
   tab: "board",
   loading: true,
   error: null,
   draft: { title: "", description: "", priority: "medium" },
   source: null,
+  highlightedId: null,
+  comments: {},
+  worktree: false,
+  wide: true,
+  previewOpen: false,
 };
 
 let renderToken = 0;
@@ -111,13 +135,45 @@ function ticketFor(task: BoardTask): string {
   return ticketIdOf(state.project?.slug ?? "", task.number);
 }
 
+function columnNameFor(task: BoardTask): string {
+  return state.columnNames[task.status] ?? columnLabel(task.status);
+}
+
+function targetFor(task: BoardTask): ChipTarget {
+  return {
+    task,
+    ticketId: ticketFor(task),
+    workspaceId: state.context?.workspaceId ?? "",
+    projectName: state.project?.name,
+    columnName: columnNameFor(task),
+    comments: state.comments[task.id]?.items,
+  };
+}
+
+function highlighted(): BoardTask | null {
+  const id = state.highlightedId;
+  if (!id) return null;
+  return (
+    state.boardTasks.find((task) => task.id === id) ??
+    state.results?.find((task) => task.id === id) ??
+    null
+  );
+}
+
 function boardMatches(task: BoardTask): boolean {
+  if (state.statusFilter && task.status !== state.statusFilter) return false;
   const needle = state.search.trim().toLowerCase();
   if (!needle) return true;
   return (
     task.title.toLowerCase().includes(needle) || ticketFor(task).toLowerCase().includes(needle)
   );
 }
+
+function visibleRows(): BoardTask[] {
+  return (state.results ?? state.boardTasks).filter(boardMatches);
+}
+
+/* ------------------------------------------------------------------- data */
 
 async function load(): Promise<void> {
   const token = ++renderToken;
@@ -165,11 +221,11 @@ async function searchWorkspace(): Promise<void> {
   const query = state.search.trim();
   if (!workspaceId || query.length < 2) {
     state.results = null;
-    renderResults();
+    renderBody();
     return;
   }
   state.loading = true;
-  renderResults();
+  renderBody();
   try {
     const found = await client.search(workspaceId, query, {
       ...(state.project ? { projectId: state.project.id } : {}),
@@ -189,25 +245,33 @@ async function searchWorkspace(): Promise<void> {
       misses > 0
         ? `${misses} match${misses === 1 ? " is" : "es are"} outside the loaded board. Open the Kaneo web app to reach them.`
         : null;
-    renderResults();
+    renderBody();
   } catch (error) {
     if (token !== renderSearch) return;
     state.loading = false;
     state.error = describe(error);
-    renderResults();
+    renderBody();
+  }
+}
+
+/** Comments with the chip, like Linear: fetch once if they are not loaded. */
+async function commentsFor(taskId: string): Promise<Comment[] | undefined> {
+  const cached = state.comments[taskId]?.items;
+  if (cached) return cached;
+  try {
+    const items = await client.listComments(taskId);
+    state.comments[taskId] = { loading: false, error: null, items };
+    return items;
+  } catch {
+    return undefined;
   }
 }
 
 async function attach(task: BoardTask): Promise<void> {
   try {
-    await attachChip({
-      task,
-      ticketId: ticketFor(task),
-      workspaceId: state.context?.workspaceId ?? "",
-      projectName: state.project?.name,
-      columnName: state.columnNames[task.status] ?? columnLabel(task.status),
-    });
-    await host.toast({ kind: "success", message: `${ticketFor(task)} attached to the chat.` });
+    const target = { ...targetFor(task), comments: await commentsFor(task.id) };
+    await attachChip(target);
+    await host.toast({ kind: "success", message: `${target.ticketId} attached to the chat.` });
     await host.close();
   } catch (error) {
     await host.toast({
@@ -219,13 +283,8 @@ async function attach(task: BoardTask): Promise<void> {
 }
 
 async function attachAndStart(task: BoardTask): Promise<void> {
-  const started = await startSessionForTask({
-    task,
-    ticketId: ticketFor(task),
-    workspaceId: state.context?.workspaceId ?? "",
-    projectName: state.project?.name,
-    columnName: state.columnNames[task.status] ?? columnLabel(task.status),
-  });
+  const target = { ...targetFor(task), comments: await commentsFor(task.id) };
+  const started = await startSessionForTask(target, { worktree: state.worktree });
   if (started) await host.close();
 }
 
@@ -257,24 +316,21 @@ async function createTask(): Promise<void> {
 
 /* ----------------------------------------------------------------- render */
 
-/**
- * The results region, kept between renders so typing in the search box
- * refreshes the rows without rebuilding the toolbar and dropping focus.
- */
-let resultsRoot: HTMLElement | null = null;
+let headRoot: HTMLElement | null = null;
+let bodyRoot: HTMLElement | null = null;
 let footRoot: HTMLElement | null = null;
 
 function render(): void {
   if (!root) return;
   clear(root);
-  resultsRoot = null;
+  headRoot = null;
+  bodyRoot = null;
   footRoot = null;
 
   if (!state.ready) {
     mountSpinner(root, { label: "Connecting to Kaneo" });
     return;
   }
-
   if (!state.connected) {
     mountEmpty(root, {
       title: "Kaneo is not connected",
@@ -284,60 +340,62 @@ function render(): void {
   }
 
   if (state.source) {
-    renderCreate();
+    renderCreateForm(false);
+    return;
+  }
+  if (state.tab === "create") {
+    renderCreateForm(true);
     return;
   }
   renderPicker();
 }
 
 function renderPicker(): void {
-  root?.append(kaneoWordmark("Attach a Kaneo task"));
+  headRoot = el("div", { className: "attach-head" });
+  root?.append(headRoot);
+  renderHead();
+
+  bodyRoot = el("div", { className: "attach-body" });
+  root?.append(bodyRoot);
+
+  footRoot = el("div", { className: "attach-foot" });
+  root?.append(footRoot);
+
+  renderBody();
+  renderFoot();
+}
+
+function renderHead(): void {
+  if (!headRoot) return;
+  clear(headRoot);
+
   const tabsHolder = el("div");
-  root?.append(tabsHolder);
+  headRoot.append(tabsHolder);
   mountTabs(tabsHolder, {
     items: [
-      { id: "board", label: state.project?.slug.toUpperCase() ?? "Board" },
+      { id: "board", label: state.project?.slug.toUpperCase() ?? "Tasks" },
       { id: "create", label: "New" },
     ],
     activeId: state.tab,
     onChange: (id) => {
-      state.tab = id === "create" ? "create" : "board";
+      if (id === "create") {
+        state.tab = "create";
+        render();
+        return;
+      }
+      state.tab = "board";
       render();
     },
   });
 
-  if (state.tab === "create") {
-    renderCreate();
-    return;
-  }
+  const row = el("div", { className: "attach-head-row" });
 
-  if (state.context && state.context.projects.length > 1) {
-    const holder = el("div");
-    root?.append(holder);
-    mountSelect(holder, {
-      label: "Project",
-      searchable: true,
-      value: state.project?.id ?? "",
-      options: state.context.projects.map((project) => ({
-        id: project.id,
-        label: project.slug.toUpperCase(),
-      })),
-      onChange: (id) => {
-        state.project = state.context?.projects.find((entry) => entry.id === id) ?? null;
-        state.search = "";
-        state.results = null;
-        state.loading = true;
-        void load();
-      },
-    });
-  }
-
-  const searchHolder = el("div");
-  root?.append(searchHolder);
+  const searchHolder = el("div", { className: "attach-search" });
+  row.append(searchHolder);
   mountSearchField(searchHolder, {
     value: state.search,
     label: "Search Kaneo",
-    placeholder: "Search this workspace",
+    placeholder: "Search, or paste a ticket id",
     onChange: (value) => {
       state.search = value;
       if (value.trim().length >= 2) {
@@ -345,26 +403,85 @@ function renderPicker(): void {
         return;
       }
       state.results = null;
-      renderResults();
+      renderBody();
     },
   });
 
-  resultsRoot = el("div", { className: "dialog-body" });
-  root?.append(resultsRoot);
-  footRoot = el("div", { className: "dialog-foot" });
-  root?.append(footRoot);
-  renderResults();
+  const columns = Object.entries(state.columnNames);
+  if (columns.length > 0) {
+    const holder = el("div", { className: state.statusFilter ? "filter filter-active" : "filter" });
+    row.append(holder);
+    mountMenu(holder, {
+      label: state.statusFilter ? (state.columnNames[state.statusFilter] ?? "Status") : "Status",
+      size: "sm",
+      variant: "ghost",
+      items: [
+        { id: "", label: "Any status" },
+        { separator: true as const },
+        ...columns.map(([id, label]) => ({ id, label })),
+      ],
+      onSelect: (id) => {
+        state.statusFilter = id;
+        renderBody();
+      },
+    });
+  }
+
+  const projects = state.context?.projects ?? [];
+  if (projects.length > 1) {
+    const holder = el("div", { className: "attach-project" });
+    row.append(holder);
+    mountSelect(holder, {
+      searchable: true,
+      searchPlaceholder: "Find a project",
+      value: state.project?.id ?? "",
+      options: projects.map((project) => ({
+        id: project.id,
+        label: project.slug.toUpperCase(),
+      })),
+      onChange: (id) => {
+        state.project = state.context?.projects.find((entry) => entry.id === id) ?? null;
+        state.search = "";
+        state.results = null;
+        state.highlightedId = null;
+        state.loading = true;
+        void load();
+      },
+    });
+  }
+
+  headRoot.append(row);
 }
 
-/** Rebuild the task list and footer; the search field keeps its focus. */
-function renderResults(): void {
-  if (!resultsRoot || !footRoot) return;
-  clear(resultsRoot);
-  clear(footRoot);
+/** The list and the preview, side by side on a wide dialog. */
+function renderBody(): void {
+  if (!bodyRoot) return;
+  clear(bodyRoot);
+
+  const rows = visibleRows();
+  if (!state.highlightedId || !rows.some((task) => task.id === state.highlightedId)) {
+    state.highlightedId = rows[0]?.id ?? null;
+  }
+  const task = highlighted();
+
+  bodyRoot.classList.toggle("narrow", !state.wide);
+  if (!state.wide && state.previewOpen && task) {
+    bodyRoot.append(renderPreview(task));
+    return;
+  }
+
+  const split = el("div", { className: "attach-split" });
+  split.append(renderList(rows));
+  if (state.wide) split.append(renderPreview(task));
+  bodyRoot.append(split);
+}
+
+function renderList(rows: BoardTask[]): HTMLElement {
+  const list = el("div", { className: "attach-list scroll" });
 
   if (state.error) {
     const holder = el("div");
-    resultsRoot.append(holder);
+    list.append(holder);
     mountBanner(holder, {
       tone: state.results ? "warning" : "error",
       title: "Kaneo",
@@ -373,57 +490,172 @@ function renderResults(): void {
     });
   }
 
-  const rows = (state.results ?? state.boardTasks).filter(boardMatches);
-
   if (state.loading && rows.length === 0) {
-    mountSpinner(resultsRoot, { label: "Loading tasks" });
-    return;
+    mountSpinner(list, { label: "Loading tasks" });
+    return list;
   }
-
   if (rows.length === 0) {
-    mountEmpty(resultsRoot, {
+    mountEmpty(list, {
       title: state.search.trim() ? "No task matches" : "This project has no tasks",
       body: state.search.trim()
         ? "Search runs inside the selected workspace."
         : "Use the New tab to create the first one.",
     });
-    return;
+    return list;
   }
 
-  const listHolder = el("div", { className: "scroll" });
-  resultsRoot.append(listHolder);
   for (const task of rows) {
-    listHolder.append(
-      renderTaskRow({
-        task,
-        ticketId: ticketFor(task),
-        column: {
-          slug: task.status,
-          isFinal: false,
-          name: state.columnNames[task.status] ?? task.status,
-        },
-        selected: false,
-        onActivate: () => void attach(task),
-      }),
-    );
+    const row = renderTaskRow({
+      task,
+      ticketId: ticketFor(task),
+      column: { slug: task.status, isFinal: false, name: columnNameFor(task) },
+      selected: task.id === state.highlightedId,
+      onActivate: () => highlight(task),
+    });
+    row.addEventListener("dblclick", () => void attach(task));
+    list.append(row);
   }
+  return list;
+}
+
+function highlight(task: BoardTask): void {
+  state.highlightedId = task.id;
+  syncComments(task.id);
+  if (!state.wide) {
+    state.previewOpen = true;
+    renderBody();
+    return;
+  }
+  renderBody();
+}
+
+function renderPreview(task: BoardTask | null): HTMLElement {
+  const preview = el("div", { className: "attach-preview" });
+  if (!task) {
+    const holder = el("div", { style: "flex:1; display:flex; align-items:center;" });
+    preview.append(holder);
+    mountEmpty(holder, {
+      title: "Select a task",
+      body: "Pick a task on the left to preview it here before attaching.",
+    });
+    return preview;
+  }
+
+  syncComments(task.id);
+  const target = targetFor(task);
+
+  if (!state.wide) {
+    const back = el("div");
+    preview.append(back);
+    mountButton(back, {
+      label: "Back",
+      variant: "ghost",
+      size: "sm",
+      onClick: () => {
+        state.previewOpen = false;
+        renderBody();
+      },
+    });
+  }
+
+  const head = el("div", { className: "picker-head" });
+  head.append(el("span", { className: "state-pill" }, target.columnName));
+  head.append(el("span", { className: "task-key" }, target.ticketId));
+  const open = el("div", { style: "margin-left:auto;" });
+  head.append(open);
+  mountButton(open, {
+    label: "Kaneo",
+    variant: "ghost",
+    size: "sm",
+    onClick: () => void openInKaneo(target),
+  });
+  preview.append(head);
+
+  preview.append(el("h2", { className: "detail-title" }, task.title));
+  preview.append(detailMeta(target));
+  preview.append(detailDescription(target, 1200));
+  preview.append(detailComments(state.comments[task.id] ?? null));
+
+  const note = el("div", { className: "pick-note" });
+  const toggle = el("div");
+  note.append(toggle);
+  mountCheckbox(toggle, {
+    label: "Create in a new worktree",
+    checked: state.worktree,
+    onChange: (worktree) => {
+      state.worktree = worktree;
+    },
+  });
+  note.append(el("p", { className: "muted" }, "The agent gets the description and comments."));
+  const start = el("div", { className: "block" });
+  note.append(start);
+  mountButton(start, {
+    label: "Start session",
+    variant: "secondary",
+    size: "sm",
+    onClick: () => {
+      void attachAndStart(task).catch((error: unknown) => {
+        void host.toast({ kind: "error", message: describe(error), dismiss: true });
+      });
+    },
+  });
+  preview.append(note);
+
+  return preview;
+}
+
+function renderFoot(): void {
+  if (!footRoot) return;
+  clear(footRoot);
+
+  const task = highlighted();
+  footRoot.append(
+    el(
+      "span",
+      { className: "attach-hint" },
+      task ? "Enter attaches the highlighted task." : "Select a task to attach.",
+    ),
+  );
 
   mountButton(footRoot, {
     label: "Cancel",
-    variant: "ghost",
+    variant: "outline",
+    size: "sm",
     onClick: () => void host.close(),
   });
-  const first = rows[0];
-  if (first) {
-    mountButton(footRoot, {
-      label: "Attach and start session",
-      variant: "secondary",
-      onClick: () => void attachAndStart(first),
-    });
-  }
+  const attachHolder = el("div");
+  footRoot.append(attachHolder);
+  mountButton(attachHolder, {
+    label: "Attach",
+    size: "sm",
+    disabled: !task,
+    onClick: () => {
+      if (task) void attach(task);
+    },
+  });
 }
 
-function renderCreate(): void {
+function renderCreateForm(showTabs: boolean): void {
+  const head = el("div", { className: "attach-head" });
+  root?.append(head);
+  if (showTabs) {
+    const tabsHolder = el("div");
+    head.append(tabsHolder);
+    mountTabs(tabsHolder, {
+      items: [
+        { id: "board", label: state.project?.slug.toUpperCase() ?? "Tasks" },
+        { id: "create", label: "New" },
+      ],
+      activeId: "create",
+      onChange: (id) => {
+        state.tab = id === "board" ? "board" : "create";
+        render();
+      },
+    });
+  } else {
+    head.append(el("h2", { className: "detail-title" }, "New Kaneo task"));
+  }
+
   const body = el("div", { className: "dialog-body" });
   root?.append(body);
 
@@ -470,15 +702,19 @@ function renderCreate(): void {
     },
   });
 
-  const foot = el("div", { className: "dialog-foot" });
+  const foot = el("div", { className: "attach-foot" });
   root?.append(foot);
   mountButton(foot, {
     label: "Cancel",
-    variant: "ghost",
+    variant: "outline",
+    size: "sm",
     onClick: () => void host.close(),
   });
-  mountButton(foot, {
+  const createHolder = el("div");
+  foot.append(createHolder);
+  mountButton(createHolder, {
     label: "Create and attach",
+    size: "sm",
     onClick: () => void createTask(),
   });
 }
@@ -497,6 +733,36 @@ function draftFromSource(item: GuestMessageItem | GuestSessionItem): Draft {
   };
 }
 
+/**
+ * Resolve a task's comments once, then repaint the preview. Called from a
+ * render path, so it must not recurse before the fetch settles.
+ */
+function syncComments(taskId: string): void {
+  if (state.comments[taskId]) return;
+  state.comments[taskId] = { loading: true, error: null };
+  void client
+    .listComments(taskId)
+    .then((comments) => {
+      state.comments[taskId] = { loading: false, error: null, items: comments };
+      renderBody();
+    })
+    .catch((error: unknown) => {
+      state.comments[taskId] = { loading: false, error: describe(error) };
+      renderBody();
+    });
+}
+
+/** Enter attaches the highlighted task, the way the reference picker does. */
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || state.tab !== "board" || state.source) return;
+  const tag = document.activeElement?.tagName.toLowerCase() ?? "";
+  if (tag === "textarea" || tag === "button") return;
+  const task = highlighted();
+  if (!task) return;
+  event.preventDefault();
+  void attach(task);
+});
+
 host.onReady((ctx) => {
   applyHostReady(ctx, document.documentElement);
   installStyles();
@@ -513,10 +779,8 @@ host.onReady((ctx) => {
       state.source = ctx.item;
       state.draft = draftFromSource(ctx.item);
       state.tab = "create";
-    } else {
-      // A chip click reopens this dialog for the task already attached.
-      state.tab = "board";
     }
+    observeWidth();
   }
 
   render();
@@ -540,6 +804,20 @@ host.onConnection((connection) => {
     void load();
   }
 });
+
+/** The dialog can be resized; below the breakpoint the panes stack. */
+function observeWidth(): void {
+  if (!root || !globalThis.ResizeObserver) return;
+  const observer = new ResizeObserver((entries) => {
+    const width = entries[0]?.contentRect.width ?? 0;
+    const wide = width === 0 || width >= NARROW_WIDTH;
+    if (wide === state.wide) return;
+    state.wide = wide;
+    if (wide) state.previewOpen = false;
+    render();
+  });
+  observer.observe(root);
+}
 
 host.onItem((item) => {
   if (!item || !("providerId" in item)) return;

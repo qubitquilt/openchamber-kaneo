@@ -2,7 +2,7 @@ import { PROVIDER_ID } from "./constants";
 import { host } from "./host";
 import { rememberSession } from "./preferences";
 import { branchForTicket, taskContext, taskToMarkdown, taskUrl } from "./format";
-import type { BoardTask } from "./types";
+import type { BoardTask, Comment } from "./types";
 
 /**
  * The JSON stored with a chip. It comes back as `ready.item.data` when the user
@@ -31,6 +31,8 @@ export interface ChipTarget {
    * context, so a slug here would read `in-progress` next to `In Progress`.
    */
   columnName: string;
+  /** Loaded comments, so the attached context reads like Linear's. */
+  comments?: Comment[];
 }
 
 export function chipUrl(target: ChipTarget): string {
@@ -60,6 +62,7 @@ export function chipFor(target: ChipTarget) {
       ...(target.projectName ? { projectName: target.projectName } : {}),
       columnName: target.columnName,
       url: chipUrl(target),
+      ...(target.comments && target.comments.length > 0 ? { comments: target.comments } : {}),
     }),
     author: target.task.assigneeName ?? undefined,
     data: chipData(target),

@@ -1,5 +1,5 @@
 import { WEB_ORIGIN } from "./constants";
-import type { BoardTask, Priority } from "./types";
+import type { BoardTask, Comment, Priority } from "./types";
 
 const DAY_MS = 86_400_000;
 
@@ -132,10 +132,29 @@ export function taskToMarkdown(
   return lines.join("\n");
 }
 
-/** The text handed to the model when a Kaneo chip is attached to a session. */
+/** Comments are model context, so each one is one line, bounded as a whole. */
+const COMMENTS_IN_CONTEXT_MAX = 6_000;
+
+function commentLine(comment: Comment): string {
+  const author = comment.user?.name ?? "Unknown";
+  const body = comment.content.replace(/\s+/g, " ").trim();
+  return `- ${author}: ${body}`;
+}
+
+/**
+ * The text handed to the model when a Kaneo chip is attached to a session. It
+ * carries the description and, like Linear, the comment thread when the caller
+ * has it, so the agent sees what the team already said.
+ */
 export function taskContext(
   task: BoardTask,
-  meta: { ticketId: string; projectName?: string; columnName?: string; url?: string },
+  meta: {
+    ticketId: string;
+    projectName?: string;
+    columnName?: string;
+    url?: string;
+    comments?: Comment[];
+  },
 ): string {
   const parts = [`Kaneo task ${meta.ticketId}: ${task.title}`];
   if (meta.projectName) parts.push(`Project: ${meta.projectName}`);
@@ -147,6 +166,18 @@ export function taskContext(
   if (meta.url) parts.push(meta.url);
   const description = task.description?.trim();
   if (description) parts.push("", description);
+
+  const comments = meta.comments ?? [];
+  if (comments.length > 0) {
+    parts.push("", "Comments:");
+    let used = 0;
+    for (const comment of comments) {
+      const line = commentLine(comment);
+      if (used + line.length > COMMENTS_IN_CONTEXT_MAX) break;
+      used += line.length;
+      parts.push(line);
+    }
+  }
   return parts.join("\n");
 }
 

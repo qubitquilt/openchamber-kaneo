@@ -1,6 +1,7 @@
 import { host } from "./host";
 import type { Priority } from "./constants";
 import { PRIORITY_RANK } from "./constants";
+import { pruneSessionLinks, sanitizeSessionLinks, type SessionLink } from "./session-links";
 
 /** Selection persisted between surfaces, kept in the extension's own storage. */
 export interface Preferences {
@@ -76,37 +77,12 @@ export async function savePreferences(next: Partial<Preferences>): Promise<Prefe
  * dropped, one storage key.
  */
 const SESSION_LINKS_KEY = "session-links";
-const SESSION_LINKS_MAX = 50;
 
-export interface SessionLink {
-  taskId: string;
-  ticketId: string;
-  /** Chip title captured at start, since lifecycle events carry no title. */
-  title: string;
-  /** When the session started, used to drop the oldest links. */
-  at: number;
-  /** Phases already posted, so two open surfaces do not comment twice. */
-  posted: string[];
-}
+export type { SessionLink } from "./session-links";
 
 export async function loadSessionLinks(): Promise<Record<string, SessionLink>> {
   try {
-    const raw = (await host.storage.get(SESSION_LINKS_KEY)) as unknown;
-    if (!raw || typeof raw !== "object") return {};
-    const links: Record<string, SessionLink> = {};
-    for (const [id, value] of Object.entries(raw as Record<string, SessionLink>)) {
-      if (!value || typeof value !== "object" || typeof value.taskId !== "string") continue;
-      links[id] = {
-        taskId: value.taskId,
-        ticketId: typeof value.ticketId === "string" ? value.ticketId : "",
-        title: typeof value.title === "string" ? value.title : "",
-        at: typeof value.at === "number" ? value.at : 0,
-        posted: Array.isArray(value.posted)
-          ? value.posted.filter((phase) => typeof phase === "string")
-          : [],
-      };
-    }
-    return links;
+    return sanitizeSessionLinks(await host.storage.get(SESSION_LINKS_KEY));
   } catch {
     return {};
   }
@@ -119,15 +95,10 @@ export async function rememberSession(
   try {
     const links = await loadSessionLinks();
     links[sessionId] = { ...link, at: Date.now(), posted: [] };
-    // Keep the newest links; the previous code pruned a copy taken before it
-    // deleted anything, so the oldest never actually fell off.
-    const newest = Object.entries(links)
-      .sort((a, b) => b[1].at - a[1].at)
-      .slice(0, SESSION_LINKS_MAX);
-    await host.storage.set(
-      SESSION_LINKS_KEY,
-      JSON.parse(JSON.stringify(Object.fromEntries(newest))),
-    );
+    // The previous code pruned a copy taken before it deleted anything, so the
+    // oldest never actually fell off; prune the whole record and store that.
+    const kept = pruneSessionLinks(links);
+    await host.storage.set(SESSION_LINKS_KEY, JSON.parse(JSON.stringify(kept)));
   } catch {
     // Without the link the status comment is skipped; the session itself is fine.
   }

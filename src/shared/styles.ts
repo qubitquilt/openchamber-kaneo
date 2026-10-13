@@ -111,26 +111,63 @@ html, body {
 .priority-high { background: var(--oc-warning); }
 .priority-urgent { background: var(--oc-error); }
 
-/* The detail sheet, drawn in place over the list. */
-.sheet {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  background: var(--oc-bg);
+/* The panel header: search, filters, then the scope pickers. */
+.panel-head { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+
+.filters { gap: 4px; }
+.filter-active .oc-sdk-btn { color: var(--oc-primary-text); }
+.filter-refresh { margin-left: auto; }
+.scope { gap: 8px; }
+
+/* The task detail, laid out like the host's Linear issue view. */
+.detail {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  overflow-y: auto;
 }
 
-.sheet-head {
+.detail-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--oc-border);
+  padding: 8px 12px;
 }
 
-.sheet-title { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 16px;
+}
+
+.detail-heading { display: flex; flex-direction: column; }
+.detail-id { font-size: 12px; color: var(--oc-muted); }
+.detail-title { margin: 2px 0 0; font-size: 15px; font-weight: 650; line-height: 1.35; }
+
+.detail-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.detail-status { min-width: 150px; }
+
+.detail-section { display: flex; flex-direction: column; gap: 8px; }
+.detail-section-title { margin: 0; font-size: 13px; font-weight: 600; }
+
+.detail-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--oc-border);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.block .oc-sdk-btn { width: 100%; }
+.detail-secondary .oc-sdk-btn { width: auto; }
+.detail-secondary { justify-content: flex-start; }
 
 .meta-grid {
   display: grid;
@@ -306,12 +343,10 @@ html, body {
   border-radius: var(--oc-radius, 10px);
   box-shadow: 0 12px 40px rgb(0 0 0 / 28%);
   width: min(560px, 100%);
-  max-height: 100%;
+  height: min(680px, 90vh);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 @media (max-width: 720px) {
@@ -353,11 +388,9 @@ html, body {
 .split-preview {
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
-  padding: 10px 4px 10px 12px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 /* List rows, shaped like the reference rows. */
@@ -429,41 +462,45 @@ html, body {
 .label-dot { width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0; }
 .label-more { font-size: 11px; color: var(--oc-muted); }
 
-/* Preview header: state pill, ticket id, close. */
-.preview-head {
+/* The comment timeline: avatar on a line, then the comment card. */
+.comments { display: flex; flex-direction: column; }
+.comment { position: relative; padding-left: 40px; padding-bottom: 20px; }
+.comment:last-child { padding-bottom: 0; }
+.comment-line {
+  position: absolute;
+  left: 16px;
+  top: 38px;
+  bottom: 6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--oc-border) 60%, transparent);
+}
+.comment > .person-avatar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--oc-border) 60%, transparent);
+  background: var(--oc-elevated, var(--oc-muted-surface));
+}
+.comment-card {
+  background: var(--oc-elevated, var(--oc-muted-surface));
+  border-radius: var(--oc-radius, 8px);
+  padding: 0 12px 12px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
 }
-
-.state-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--oc-border);
-  border-radius: 999px;
-  padding: 3px 10px;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  color: inherit;
-  cursor: pointer;
-}
-
-.state-pill:hover { border-color: var(--oc-primary); }
-
-.preview-title { font-size: 15px; font-weight: 650; line-height: 1.35; }
-
-/* Comments under the description, like the reference preview's timeline. */
-.comments { display: flex; flex-direction: column; gap: 10px; }
-.comment { display: flex; flex-direction: column; gap: 3px; }
 .comment-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 11px;
   color: var(--oc-muted);
 }
+.comment-author { color: var(--oc-primary-text); }
 .comment-body { font-size: 12px; }
 
 .kaneo-mark { flex-shrink: 0; fill: currentColor; }

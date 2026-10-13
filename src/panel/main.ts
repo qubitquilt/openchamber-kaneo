@@ -4,34 +4,24 @@ import {
   mountBanner,
   mountButton,
   mountEmpty,
+  mountList,
   mountMenu,
   mountSearchField,
   mountSelect,
   mountSpinner,
-  mountTabs,
 } from "@openchamber/sdk/ui";
 
 import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, PRIORITY_RANK, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
-import { attachChip, reportFailure, type ChipTarget } from "../shared/attachments";
-import {
-  detailActions,
-  detailComments,
-  detailDescription,
-  detailHead,
-  detailLabels,
-  detailMeta,
-  detailMove,
-  type CommentState,
-} from "../shared/detail";
+import { reportFailure, type ChipTarget } from "../shared/attachments";
+import { detailScaffold, type CommentState } from "../shared/detail";
 import { columnLabel, priorityLabel, ticketIdOf } from "../shared/format";
 import { loadPreferences, savePreferences, type Preferences } from "../shared/preferences";
 import { installStyles } from "../shared/styles";
-import { renderTaskRow } from "../shared/list-row";
 import { watchSessionLifecycle } from "../shared/lifecycle";
-import type { BoardTask, Label, ProjectListItem } from "../shared/types";
+import type { AssignedTask, BoardColumn, BoardTask, Label, ProjectListItem } from "../shared/types";
 import {
   NoWorkspaceError,
   bootstrap,
@@ -42,21 +32,16 @@ import {
   type WorkspaceContext,
 } from "../shared/workspace";
 
+/**
+ * The rail panel, shaped like OpenChamber's own Linear issues panel: one list of
+ * the selected project's tasks with a search box and a row of filters, and an
+ * in-place detail that opens the task with its status, metadata and comments.
+ */
+
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("Kaneo panel is missing its #root element.");
 
 const client = createKaneoClient((input) => host.request(input));
-
-interface MineRow {
-  id: string;
-  ticketId: string;
-  title: string;
-  summary: string;
-  /** The task's own project, which may differ from the panel's selection. */
-  projectName: string;
-  projectId: string;
-  statusName: string | null;
-}
 
 interface PanelState {
   ready: HostReadyContext | null;
@@ -65,7 +50,9 @@ interface PanelState {
   project: ProjectListItem | null;
   board: Awaited<ReturnType<typeof client.getBoard>> | null;
   labels: Label[];
-  mine: MineRow[];
+  /** Tasks assigned to the account across the whole workspace. */
+  mine: AssignedTask[];
+  mineLoaded: boolean;
   mineTotal: number;
   /** A task fetched for a chip click that is not on the selected board. */
   extraTask: BoardTask | null;
@@ -73,7 +60,6 @@ interface PanelState {
   comments: Record<string, CommentState>;
   preferences: Preferences;
   search: string;
-  tab: "board" | "mine";
   loading: boolean;
   error: string | null;
 }
@@ -86,6 +72,7 @@ const state: PanelState = {
   board: null,
   labels: [],
   mine: [],
+  mineLoaded: false,
   mineTotal: 0,
   extraTask: null,
   comments: {},
@@ -99,9 +86,9 @@ const state: PanelState = {
     view: "list",
     assigneeFilter: "any",
     labelFilter: null,
+    createInWorktree: false,
   },
   search: "",
-  tab: "board",
   loading: true,
   error: null,
 };
@@ -144,6 +131,45 @@ function taskMatches(task: BoardTask): boolean {
   );
 }
 
+function visibleTasks(): BoardTask[] {
+  const board = state.board?.board;
+  if (!board) return [];
+  const rows: BoardTask[] = [];
+  for (const column of board.columns) {
+    for (const task of column.tasks) {
+      if (taskMatches(task)) rows.push(task);
+    }
+  }
+  return rows;
+}
+
+/** The same filters the board uses, over a workspace-wide assigned task. */
+function mineMatches(task: AssignedTask): boolean {
+  const { priorityFilter, labelFilter, statusFilter } = state.preferences;
+  if (priorityFilter !== "any" && PRIORITY_RANK[task.priority] < PRIORITY_RANK[priorityFilter]) {
+    return false;
+  }
+  if (labelFilter && !(task.labels ?? []).some((label) => label.id === labelFilter)) {
+    return false;
+  }
+  if (statusFilter && task.status !== statusFilter) return false;
+  const needle = state.search.trim().toLowerCase();
+  if (!needle) return true;
+  const ticket = ticketIdOf(task.projectSlug, task.number).toLowerCase();
+  return task.title.toLowerCase().includes(needle) || ticket.includes(needle);
+}
+
+function anyFilterActive(): boolean {
+  const { priorityFilter, statusFilter, assigneeFilter, labelFilter } = state.preferences;
+  return (
+    state.search.trim().length > 0 ||
+    priorityFilter !== "any" ||
+    statusFilter !== null ||
+    assigneeFilter !== "any" ||
+    labelFilter !== null
+  );
+}
+
 /* ------------------------------------------------------------------- data */
 
 async function reloadBoard(): Promise<void> {
@@ -154,20 +180,14 @@ async function reloadMine(): Promise<void> {
   const workspaceId = state.context?.workspaceId;
   if (!workspaceId) {
     state.mine = [];
+    state.mineLoaded = true;
     state.mineTotal = 0;
     return;
   }
   const assigned = await client.listAssignedTasks(workspaceId);
+  state.mine = assigned.tasks;
+  state.mineLoaded = true;
   state.mineTotal = assigned.total;
-  state.mine = assigned.tasks.map((task) => ({
-    id: task.id,
-    ticketId: ticketIdOf(task.projectSlug, task.number),
-    title: task.title,
-    summary: `${task.projectName} · ${task.statusName ?? task.status}`,
-    projectName: task.projectName,
-    projectId: task.projectId,
-    statusName: task.statusName,
-  }));
 }
 
 async function reloadLabels(): Promise<void> {
@@ -214,6 +234,7 @@ async function load(options: { keepDetail?: boolean } = {}): Promise<void> {
     if (labelResult.status === "rejected") state.labels = [];
     if (mineResult.status === "rejected") {
       state.mine = [];
+      state.mineLoaded = true;
       state.mineTotal = 0;
     }
     if (token !== renderToken) return;
@@ -238,8 +259,7 @@ async function load(options: { keepDetail?: boolean } = {}): Promise<void> {
 
 /**
  * The results region, kept between renders so typing in the search box can
- * refresh the rows without rebuilding the toolbar — rebuilding it would drop
- * the input's focus after one character.
+ * refresh the list without rebuilding the toolbar and dropping focus.
  */
 let resultsRoot: HTMLElement | null = null;
 
@@ -266,21 +286,13 @@ function render(): void {
     return;
   }
 
-  root.append(renderSelectors());
+  const detail = detailTask();
+  if (detail) {
+    root.append(renderDetail(detail));
+    return;
+  }
 
-  const tabsHolder = el("div");
-  root.append(tabsHolder);
-  mountTabs(tabsHolder, {
-    items: [
-      { id: "board", label: "Board" },
-      { id: "mine", label: "Mine", count: state.mineTotal },
-    ],
-    activeId: state.tab,
-    onChange: (id) => {
-      state.tab = id === "mine" ? "mine" : "board";
-      render();
-    },
-  });
+  root.append(renderToolbar());
 
   if (state.error) {
     const holder = el("div");
@@ -293,104 +305,122 @@ function render(): void {
     });
   }
 
+  resultsRoot = el("div", { className: "scroll" });
+  root.append(resultsRoot);
+  renderList();
+}
+
+function mountTaskList(items: Array<{ id: string; title: string; leading: string }>): void {
+  if (!resultsRoot) return;
+  const holder = el("div");
+  resultsRoot.append(holder);
+  mountList(holder, {
+    items,
+    selectedId: state.preferences.openTaskId,
+    ariaLabel: "Kaneo tasks",
+    onSelect: (id) => void openDetail(id),
+  });
+}
+
+/** Rebuild only the task list, leaving the toolbar (and its focus) alone. */
+function renderList(): void {
+  if (!resultsRoot) return;
+  clear(resultsRoot);
+
+  // "Assigned to me" is the workspace-wide list Linear's assignee filter gives.
+  if (state.preferences.assigneeFilter === "me") {
+    if (!state.mineLoaded) {
+      mountSpinner(resultsRoot, { label: "Loading tasks" });
+      return;
+    }
+    if (state.mine.length === 0) {
+      mountEmpty(resultsRoot, {
+        title: "Nothing assigned to you",
+        body: "Tasks assigned to your Kaneo account across this workspace show up here.",
+      });
+      return;
+    }
+    const tasks = state.mine.filter(mineMatches);
+    if (tasks.length === 0) {
+      mountEmpty(resultsRoot, {
+        title: "Nothing matches the filters",
+        body: "Clear the search box or the filters.",
+      });
+      return;
+    }
+    mountTaskList(
+      tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        leading: ticketIdOf(task.projectSlug, task.number),
+      })),
+    );
+    return;
+  }
+
+  if (!state.project) {
+    mountEmpty(resultsRoot, {
+      title: "No project",
+      body: "This workspace has no Kaneo project yet.",
+    });
+    return;
+  }
+  if (!state.board) {
+    mountSpinner(resultsRoot, { label: "Loading tasks" });
+    return;
+  }
+
+  const board = state.board.board;
+  const tasks = visibleTasks();
+  const total = board.columns.reduce((sum, column) => sum + column.tasks.length, 0);
+
+  if (tasks.length === 0) {
+    mountEmpty(resultsRoot, {
+      title: total === 0 ? "This board is empty" : "Nothing matches the filters",
+      body:
+        total === 0
+          ? "Open the + button next to the chat box to create the first task."
+          : "Clear the search box or the filters.",
+      ...(total === 0
+        ? { action: { label: "Where do I add one?", onClick: openAttachPicker } }
+        : {}),
+    });
+    return;
+  }
+
+  if (state.board.truncated) {
+    resultsRoot.append(
+      el("div", { className: "muted" }, `Showing the first ${tasks.length} tasks.`),
+    );
+  }
+
+  mountTaskList(
+    tasks.map((task) => ({ id: task.id, title: task.title, leading: ticketFor(task) })),
+  );
+}
+
+function renderToolbar(): HTMLElement {
+  const wrap = el("div", { className: "panel-head" });
+
   const searchHolder = el("div");
-  root.append(searchHolder);
+  wrap.append(searchHolder);
   mountSearchField(searchHolder, {
     value: state.search,
     label: "Filter tasks",
-    placeholder: state.tab === "mine" ? "Filter assigned tasks" : "Filter this board",
+    placeholder: "Filter by title, ticket or description",
     onChange: (value) => {
       state.search = value;
-      renderResults();
+      renderList();
     },
   });
 
-  root.append(renderFilters());
-
-  resultsRoot = el("div", { className: "scroll" });
-  root.append(resultsRoot);
-  renderResults();
-
-  const detail = detailTask();
-  if (detail) root.append(renderDetail(detail));
-}
-
-/** Rebuild only the task lists, leaving the toolbar (and its focus) alone. */
-function renderResults(): void {
-  if (!resultsRoot) return;
-  clear(resultsRoot);
-  if (state.tab === "mine") renderMine(resultsRoot);
-  else renderBoard(resultsRoot);
-}
-
-function renderSelectors(): HTMLElement {
-  const bar = el("div", { className: "toolbar" });
-
-  const workspaces = state.context?.workspaces ?? [];
-  if (workspaces.length > 1) {
-    const holder = el("div", { style: "flex:1; min-width:120px;" });
-    bar.append(holder);
-    mountSelect(holder, {
-      label: "Workspace",
-      value: state.context?.workspaceId ?? "",
-      options: workspaces.map((entry) => ({ id: entry.id, label: entry.name })),
-      onChange: (id) => void switchWorkspace(id),
-    });
-  }
-
-  const projects = state.context?.projects ?? [];
-  if (projects.length > 0) {
-    const holder = el("div", { style: "flex:1; min-width:120px;" });
-    bar.append(holder);
-    mountSelect(holder, {
-      label: "Project",
-      searchable: projects.length > 8,
-      searchPlaceholder: "Find a project",
-      value: state.project?.id ?? "",
-      options: projects.map((project) => ({
-        id: project.id,
-        label: project.slug.toUpperCase(),
-        hint: project.statistics ? `${project.statistics.totalTasks}` : undefined,
-      })),
-      onChange: (id) => void switchProject(id),
-    });
-  }
-
-  return bar;
-}
-
-function renderFilters(): HTMLElement {
-  const bar = el("div", { className: "toolbar" });
-
-  const priorityItems = [
-    { id: "any", label: "Any priority" },
-    { separator: true as const },
-    ...PRIORITIES.map((priority) => ({ id: priority, label: priorityLabel(priority) })),
-  ];
-  const priorityHolder = el("div");
-  bar.append(priorityHolder);
-  mountMenu(priorityHolder, {
-    label:
-      state.preferences.priorityFilter === "any"
-        ? "Priority"
-        : priorityLabel(state.preferences.priorityFilter),
-    size: "sm",
-    items: priorityItems,
-    onSelect: (id) => {
-      void savePreferences({ priorityFilter: id as Priority | "any" }).then((preferences) => {
-        state.preferences = preferences;
-        render();
-      });
-    },
-  });
+  const bar = el("div", { className: "toolbar filters" });
 
   const columns = state.board?.board.columns ?? [];
-  const statusHolder = el("div");
-  bar.append(statusHolder);
   const statusName = columns.find((column) => column.id === state.preferences.statusFilter)?.name;
-  mountMenu(statusHolder, {
+  filterMenu(bar, {
     label: statusName ?? "Status",
-    size: "sm",
+    active: state.preferences.statusFilter !== null,
     items: [
       { id: "", label: "Any status" },
       { separator: true as const },
@@ -404,11 +434,28 @@ function renderFilters(): HTMLElement {
     },
   });
 
-  const assigneeHolder = el("div");
-  bar.append(assigneeHolder);
-  mountMenu(assigneeHolder, {
+  filterMenu(bar, {
+    label:
+      state.preferences.priorityFilter === "any"
+        ? "Priority"
+        : priorityLabel(state.preferences.priorityFilter),
+    active: state.preferences.priorityFilter !== "any",
+    items: [
+      { id: "any", label: "Any priority" },
+      { separator: true as const },
+      ...PRIORITIES.map((priority) => ({ id: priority, label: priorityLabel(priority) })),
+    ],
+    onSelect: (id) => {
+      void savePreferences({ priorityFilter: id as Priority | "any" }).then((preferences) => {
+        state.preferences = preferences;
+        render();
+      });
+    },
+  });
+
+  filterMenu(bar, {
     label: state.preferences.assigneeFilter === "me" ? "Assigned to me" : "Assignee",
-    size: "sm",
+    active: state.preferences.assigneeFilter === "me",
     items: [
       { id: "any", label: "Anyone" },
       { id: "me", label: "Assigned to me" },
@@ -421,18 +468,15 @@ function renderFilters(): HTMLElement {
     },
   });
 
-  const labelItems = [
-    { id: "", label: "Any label" },
-    { separator: true as const },
-    ...state.labels.map((label) => ({ id: label.id, label: label.name })),
-  ];
-  const labelHolder = el("div");
-  bar.append(labelHolder);
   const label = activeLabel();
-  mountMenu(labelHolder, {
-    label: label ? label.name : "Label",
-    size: "sm",
-    items: labelItems,
+  filterMenu(bar, {
+    label: label ? label.name : "Labels",
+    active: label !== null,
+    items: [
+      { id: "", label: "Any label" },
+      { separator: true as const },
+      ...state.labels.map((entry) => ({ id: entry.id, label: entry.name })),
+    ],
     onSelect: (id) => {
       void savePreferences({ labelFilter: id || null }).then((preferences) => {
         state.preferences = preferences;
@@ -441,7 +485,29 @@ function renderFilters(): HTMLElement {
     },
   });
 
-  const refreshHolder = el("div", { style: "margin-left:auto;" });
+  if (anyFilterActive()) {
+    const holder = el("div", { className: "filter-clear" });
+    bar.append(holder);
+    mountButton(holder, {
+      label: "Clear",
+      variant: "ghost",
+      size: "sm",
+      onClick: () => {
+        state.search = "";
+        void savePreferences({
+          priorityFilter: "any",
+          statusFilter: null,
+          assigneeFilter: "any",
+          labelFilter: null,
+        }).then((preferences) => {
+          state.preferences = preferences;
+          render();
+        });
+      },
+    });
+  }
+
+  const refreshHolder = el("div", { className: "filter-refresh" });
   bar.append(refreshHolder);
   mountButton(refreshHolder, {
     label: "Refresh",
@@ -451,116 +517,58 @@ function renderFilters(): HTMLElement {
     onClick: () => void load({ keepDetail: true }),
   });
 
-  return bar;
+  wrap.append(bar);
+
+  const scopes = el("div", { className: "toolbar scope" });
+  const workspaces = state.context?.workspaces ?? [];
+  if (workspaces.length > 1) {
+    const holder = el("div", { style: "flex:1; min-width:120px;" });
+    scopes.append(holder);
+    mountSelect(holder, {
+      value: state.context?.workspaceId ?? "",
+      options: workspaces.map((entry) => ({ id: entry.id, label: entry.name })),
+      onChange: (id) => void switchWorkspace(id),
+    });
+  }
+  const projects = state.context?.projects ?? [];
+  if (projects.length > 0) {
+    const holder = el("div", { style: "flex:1; min-width:120px;" });
+    scopes.append(holder);
+    mountSelect(holder, {
+      searchable: projects.length > 8,
+      searchPlaceholder: "Find a project",
+      value: state.project?.id ?? "",
+      options: projects.map((project) => ({
+        id: project.id,
+        label: project.slug.toUpperCase(),
+        hint: project.statistics ? `${project.statistics.totalTasks}` : undefined,
+      })),
+      onChange: (id) => void switchProject(id),
+    });
+  }
+  if (scopes.childElementCount > 0) wrap.append(scopes);
+
+  return wrap;
 }
 
-function renderBoard(scroller: HTMLElement): void {
-  if (!state.project) {
-    mountEmpty(scroller, { title: "No project", body: "This workspace has no Kaneo project yet." });
-    return;
-  }
-  if (!state.board) {
-    mountSpinner(scroller, { label: "Loading tasks" });
-    return;
-  }
-
-  const board = state.board.board;
-  const total = board.columns.reduce((sum, column) => sum + column.tasks.length, 0);
-  const shown = board.columns.reduce(
-    (sum, column) => sum + column.tasks.filter(taskMatches).length,
-    0,
-  );
-
-  if (shown === 0) {
-    mountEmpty(scroller, {
-      title: total === 0 ? "This board is empty" : "Nothing matches the filters",
-      body:
-        total === 0
-          ? "Open the + button next to the chat box to create the first task."
-          : "Clear the search box or the priority and label filters.",
-      ...(total === 0
-        ? { action: { label: "Where do I add one?", onClick: openAttachPicker } }
-        : {}),
-    });
-    return;
-  }
-
-  if (state.board.truncated) {
-    scroller.append(
-      el("div", { className: "muted" }, `Showing the first ${shown} of ${total} tasks.`),
-    );
-  }
-
-  for (const column of board.columns) {
-    const tasks = column.tasks.filter(taskMatches);
-    const group = el("div", { className: "group" });
-    group.append(
-      el(
-        "div",
-        { className: "group-head" },
-        el("span", { className: "eyebrow" }, column.name),
-        el("span", { className: "count-pill" }, String(tasks.length)),
-      ),
-    );
-    if (tasks.length === 0) {
-      group.append(el("div", { className: "muted" }, "Empty"));
-    } else {
-      for (const task of tasks) {
-        group.append(
-          renderTaskRow({
-            task,
-            ticketId: ticketFor(task),
-            column,
-            selected: task.id === state.preferences.openTaskId,
-            onActivate: () => void openDetail(task.id),
-          }),
-        );
-      }
-    }
-    scroller.append(group);
-  }
-}
-
-function renderMine(scroller: HTMLElement): void {
-  const needle = state.search.trim().toLowerCase();
-  const rows = state.mine.filter(
-    (row) =>
-      !needle ||
-      row.title.toLowerCase().includes(needle) ||
-      row.ticketId.toLowerCase().includes(needle),
-  );
-
-  if (rows.length === 0) {
-    mountEmpty(scroller, {
-      title: state.mine.length === 0 ? "Nothing assigned to you" : "Nothing matches the filter",
-      body:
-        state.mine.length === 0
-          ? "Tasks assigned to your Kaneo account in this workspace show up here."
-          : undefined,
-    });
-    return;
-  }
-
-  for (const row of rows) {
-    scroller.append(
-      renderTaskRow({
-        task: {
-          id: row.id,
-          projectId: "",
-          title: row.title,
-          number: null,
-          description: null,
-          status: "",
-          priority: "no-priority",
-          createdAt: "",
-        },
-        ticketId: row.ticketId,
-        column: { slug: "", isFinal: false, name: row.projectName },
-        selected: false,
-        onActivate: () => void attachMineRow(row.id),
-      }),
-    );
-  }
+function filterMenu(
+  bar: HTMLElement,
+  props: {
+    label: string;
+    items: Array<{ id: string; label: string } | { separator: true }>;
+    active: boolean;
+    onSelect: (id: string) => void;
+  },
+): void {
+  const holder = el("div", { className: props.active ? "filter filter-active" : "filter" });
+  bar.append(holder);
+  mountMenu(holder, {
+    label: props.label,
+    size: "sm",
+    variant: "ghost",
+    items: props.items,
+    onSelect: props.onSelect,
+  });
 }
 
 /* ----------------------------------------------------------------- detail */
@@ -642,6 +650,7 @@ async function closeDetail(): Promise<void> {
 }
 
 async function moveFromPanel(task: BoardTask, columnId: string): Promise<void> {
+  if (task.status === columnId) return;
   const column = state.board?.board.columns.find((entry) => entry.id === columnId);
   await client.updateTaskStatus(task.id, columnId);
   await host.toast({
@@ -656,20 +665,23 @@ async function moveFromPanel(task: BoardTask, columnId: string): Promise<void> {
 function renderDetail(task: BoardTask): HTMLElement {
   ensureComments(task.id);
   const target = targetFor(task);
-  const sheet = el("div", { className: "sheet" });
-  sheet.append(detailHead(target, () => void closeDetail()));
-  sheet.append(detailMeta(target));
-  const labels = detailLabels(target);
-  if (labels) sheet.append(labels);
-  sheet.append(detailDescription(target));
-  const comments = detailComments(state.comments[task.id] ?? null);
-  if (comments) sheet.append(comments);
-  sheet.append(detailActions(target));
-  const move = detailMove(state.board?.board.columns ?? [], task.status, (columnId) => {
-    void moveFromPanel(task, columnId);
+  const columns: BoardColumn[] = state.board?.board.columns ?? [];
+  const finalColumn = columns.find((column) => column.isFinal);
+  return detailScaffold(target, {
+    columns,
+    comments: state.comments[task.id] ?? null,
+    worktree: state.preferences.createInWorktree,
+    onWorktreeChange: (worktree) => {
+      state.preferences = { ...state.preferences, createInWorktree: worktree };
+      void savePreferences({ createInWorktree: worktree });
+    },
+    onMove: (columnId) => void moveFromPanel(task, columnId),
+    onCloseIssue: () => {
+      if (finalColumn) void moveFromPanel(task, finalColumn.id);
+    },
+    canCloseIssue: Boolean(finalColumn) && task.status !== finalColumn?.id,
+    onBack: () => void closeDetail(),
   });
-  if (move) sheet.append(move);
-  return sheet;
 }
 
 /* ---------------------------------------------------------------- actions */
@@ -679,6 +691,7 @@ async function switchWorkspace(workspaceId: string): Promise<void> {
   state.preferences = await savePreferences({ workspaceId, projectId: null, openTaskId: null });
   state.board = null;
   state.mine = [];
+  state.mineLoaded = false;
   state.extraTask = null;
   await load();
 }
@@ -690,25 +703,6 @@ async function switchProject(projectId: string): Promise<void> {
   state.board = null;
   state.extraTask = null;
   await load();
-}
-
-async function attachMineRow(taskId: string): Promise<void> {
-  try {
-    const detail = await client.getTask(taskId);
-    // The ticket, project and column all come from the task itself: a task
-    // assigned in another project must not inherit this panel's selection.
-    const assigned = state.mine.find((row) => row.id === taskId);
-    await attachChip({
-      task: detail,
-      ticketId: assigned?.ticketId ?? ticketFor(detail),
-      workspaceId: state.context?.workspaceId ?? detail.workspaceId ?? "",
-      projectName: assigned?.projectName ?? projectFor(detail)?.name,
-      columnName: assigned?.statusName ?? columnLabel(detail.status),
-    });
-    await host.toast({ kind: "success", message: "Task attached to the chat." });
-  } catch (error) {
-    await reportFailure("Attach", error);
-  }
 }
 
 function openAttachPicker(): void {

@@ -1,4 +1,4 @@
-import { mountButton } from "@openchamber/sdk/ui";
+import { mountButton, mountCheckbox, mountSelect } from "@openchamber/sdk/ui";
 
 import {
   attachTask,
@@ -10,14 +10,14 @@ import {
 } from "./attachments";
 import { allLabelChips, avatarNode } from "./chips";
 import { collapsibleMarkdown, el, renderMarkdown } from "./dom";
-import { dueLabel, isOverdue, priorityLabel, relativeTimeOf } from "./format";
+import { dueLabel, priorityLabel, relativeTimeOf } from "./format";
 import type { BoardColumn, Comment } from "./types";
 
 /**
- * The pieces a task detail shares across surfaces. The rail panel's sheet, the
- * board page's overlay and its split-view preview all compose these, so a
- * change to the metadata rows, the action row or the comment list lands in one
- * place instead of three.
+ * The rail sheet and the board page draw the same task detail, in the shape of
+ * the Linear issue view: a header bar, a title block, a status row, a metadata
+ * grid, the description, the comment timeline and a footer that starts
+ * sessions. Keeping it in one module is what stops the two surfaces drifting.
  */
 
 export interface CommentState {
@@ -26,11 +26,16 @@ export interface CommentState {
   items?: Comment[];
 }
 
-/** Attach a task's action buttons with the shared loading and error handling. */
-function actionButton(root: HTMLElement, label: string, run: () => Promise<void>): void {
+/** Attach a button with the shared loading and error handling. */
+function actionButton(
+  root: HTMLElement,
+  label: string,
+  run: () => Promise<void>,
+  options: { variant?: "default" | "secondary" | "outline" | "ghost"; block?: boolean } = {},
+): void {
   const handle = mountButton(root, {
     label,
-    variant: "secondary",
+    variant: options.variant ?? "secondary",
     size: "sm",
     onClick: () => {
       handle.update({ loading: true });
@@ -39,30 +44,73 @@ function actionButton(root: HTMLElement, label: string, run: () => Promise<void>
         .finally(() => handle.update({ loading: false }));
     },
   });
+  if (options.block) root.classList.add("block");
 }
 
-/** Ticket id, title and a close control, shared by the overlay and the sheet. */
-export function detailHead(target: ChipTarget, onClose: () => void): HTMLElement {
+/** The header bar: Back to the list, then Open in Kaneo. */
+export function detailHeader(target: ChipTarget, onBack: () => void): HTMLElement {
+  const bar = el("div", { className: "detail-header" });
+  const back = el("div");
+  bar.append(back);
+  mountButton(back, { label: "Back", variant: "ghost", size: "sm", onClick: onBack });
+  const open = el("div", { style: "margin-left:auto;" });
+  bar.append(open);
+  mountButton(open, {
+    label: "Open in Kaneo",
+    variant: "ghost",
+    size: "sm",
+    onClick: () => void openInKaneo(target),
+  });
+  return bar;
+}
+
+/** The ticket id and the title that head the detail. */
+export function detailTitle(target: ChipTarget): HTMLElement {
   return el(
     "div",
-    { className: "sheet-head" },
-    el(
-      "div",
-      { style: "flex:1; min-width:0;" },
-      el("div", { className: "task-key" }, target.ticketId),
-      el("div", { className: "sheet-title" }, target.task.title),
-    ),
-    el("button", { className: "link-button", type: "button", onClick: onClose }, "Close"),
+    { className: "detail-heading" },
+    el("div", { className: "detail-id" }, target.ticketId),
+    el("h2", { className: "detail-title" }, target.task.title),
   );
 }
 
-/** Status, priority, assignee, due date and subtask progress as a definition list. */
+/** The status picker plus a Close button, the way Linear's issue card acts. */
+export function detailStatusRow(
+  target: ChipTarget,
+  columns: BoardColumn[],
+  handlers: { onMove: (columnId: string) => void; onClose: () => void; canClose: boolean },
+): HTMLElement {
+  const row = el("div", { className: "detail-row" });
+  if (columns.length > 0) {
+    const holder = el("div", { className: "detail-status" });
+    row.append(holder);
+    mountSelect(holder, {
+      value: target.task.status,
+      options: columns.map((column) => ({ id: column.id, label: column.name })),
+      onChange: handlers.onMove,
+    });
+  }
+  if (handlers.canClose) {
+    const holder = el("div");
+    row.append(holder);
+    mountButton(holder, {
+      label: "Close issue",
+      variant: "outline",
+      size: "sm",
+      onClick: handlers.onClose,
+    });
+  }
+  return row;
+}
+
+/** Project, assignee, priority, due date, subtask progress and labels. */
 export function detailMeta(target: ChipTarget): HTMLElement {
   const { task } = target;
-  const meta = el("dl", { className: "meta-grid" });
-  const rows: Array<[string, string]> = [["Status", target.columnName]];
+  const grid = el("dl", { className: "meta-grid" });
+  const rows: Array<[string, string]> = [];
+  if (target.projectName) rows.push(["Project", target.projectName]);
   if (task.priority !== "no-priority") rows.push(["Priority", priorityLabel(task.priority)]);
-  if (task.assigneeName) rows.push(["Assignee", task.assigneeName]);
+  rows.push(["Assignee", task.assigneeName ?? "Unassigned"]);
   const due = dueLabel(task.dueDate);
   if (due) rows.push(["Due", due]);
   const subtasks = task.subtaskCounts;
@@ -72,96 +120,142 @@ export function detailMeta(target: ChipTarget): HTMLElement {
   if (task.descriptionDeferred) {
     rows.push(["Description", "Too large to inline; open the task for the full text."]);
   }
-  for (const [key, value] of rows) meta.append(el("dt", {}, key), el("dd", {}, value));
-  return meta;
-}
+  for (const [key, value] of rows) grid.append(el("dt", {}, key), el("dd", {}, value));
 
-/** Every label on the task, uncapped. */
-export function detailLabels(target: ChipTarget): HTMLElement | null {
-  return allLabelChips(target.task.labels ?? []);
-}
-
-/** One muted meta line: assignee, priority, due date, age, subtask progress. */
-export function detailMetaLine(target: ChipTarget): HTMLElement {
-  const { task } = target;
-  const meta = el("div", { className: "row-meta" });
-  if (task.assigneeName) meta.append(el("span", {}, task.assigneeName));
-  if (task.priority !== "no-priority") meta.append(el("span", {}, priorityLabel(task.priority)));
-  const due = dueLabel(task.dueDate);
-  if (due) meta.append(el("span", { className: isOverdue(task.dueDate) ? "overdue" : "" }, due));
-  const age = relativeTimeOf(task.createdAt);
-  if (age) meta.append(el("span", {}, age));
-  const subtasks = task.subtaskCounts;
-  if (subtasks && subtasks.total > 0) {
-    meta.append(
-      el("span", { className: "tabular" }, `${subtasks.completed}/${subtasks.total} subtasks`),
-    );
+  const labels = allLabelChips(task.labels ?? []);
+  if (labels) {
+    const cell = el("dd", { className: "meta-labels" });
+    cell.append(labels);
+    grid.append(el("dt", {}, "Labels"), cell);
   }
-  return meta;
+  return grid;
 }
 
 /** The description, collapsed behind a Read more toggle past `limit`. */
 export function detailDescription(target: ChipTarget, limit = 320): HTMLElement {
-  return collapsibleMarkdown(target.task.description, limit);
+  return el(
+    "div",
+    { className: "detail-section" },
+    collapsibleMarkdown(target.task.description, limit),
+  );
 }
 
 /** The comment timeline, or the loading/error line that stands in for it. */
-export function detailComments(state: CommentState | null): HTMLElement | null {
-  if (!state) return null;
+export function detailComments(state: CommentState | null): HTMLElement {
+  const section = el("div", { className: "detail-section" });
+  section.append(el("h3", { className: "detail-section-title" }, "Comments"));
+  if (!state) return section;
   if (state.error) {
-    return el("div", { className: "muted" }, `Comments unavailable: ${state.error}`);
+    section.append(el("p", { className: "muted" }, `Comments unavailable: ${state.error}`));
+    return section;
   }
-  if (state.loading) return el("div", { className: "muted" }, "Loading comments…");
+  if (state.loading) {
+    section.append(el("p", { className: "muted" }, "Loading comments…"));
+    return section;
+  }
   const items = state.items ?? [];
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    section.append(el("p", { className: "muted" }, "No comments yet."));
+    return section;
+  }
 
-  const list = el("div", { className: "comments" });
-  list.append(el("span", { className: "eyebrow" }, `Comments (${items.length})`));
-  for (const comment of items) {
+  const thread = el("div", { className: "comments" });
+  items.forEach((comment, index) => {
+    const isLast = index === items.length - 1;
     const when = relativeTimeOf(comment.createdAt);
-    list.append(
+    const row = el("div", { className: "comment" });
+    if (!isLast) row.append(el("div", { className: "comment-line" }));
+    row.append(avatarNode(comment.user?.name));
+    const card = el("div", { className: "comment-card" });
+    card.append(
       el(
         "div",
-        { className: "comment" },
-        el(
-          "div",
-          { className: "comment-head" },
-          avatarNode(comment.user?.name),
-          el("span", {}, comment.user?.name ?? "Unknown"),
-          when ? el("span", {}, when) : null,
-        ),
-        el("div", { className: "comment-body" }, renderMarkdown(comment.content)),
+        { className: "comment-head" },
+        el("span", { className: "comment-author" }, comment.user?.name ?? "Unknown"),
+        when ? el("span", {}, when) : null,
       ),
+      el("div", { className: "comment-body" }, renderMarkdown(comment.content)),
+    );
+    row.append(card);
+    thread.append(row);
+  });
+  section.append(thread);
+  return section;
+}
+
+export interface DetailOptions {
+  /** The board's columns, for the status picker; empty hides it. */
+  columns: BoardColumn[];
+  comments: CommentState | null;
+  /** Worktree choice, owned by the surface so it survives a re-render. */
+  worktree: boolean;
+  onWorktreeChange: (worktree: boolean) => void;
+  onMove: (columnId: string) => void;
+  onCloseIssue: () => void;
+  canCloseIssue: boolean;
+  /** Hide the secondary attach actions, for a read-only surface. */
+  showChatActions?: boolean;
+}
+
+/** Title, status, metadata, description and comments, the scrolling body. */
+export function detailBody(target: ChipTarget, options: DetailOptions): HTMLElement {
+  const body = el("div", { className: "detail-body" });
+  body.append(detailTitle(target));
+  if (options.columns.length > 0 || options.canCloseIssue) {
+    body.append(
+      detailStatusRow(target, options.columns, {
+        onMove: options.onMove,
+        onClose: options.onCloseIssue,
+        canClose: options.canCloseIssue,
+      }),
     );
   }
-  return list;
+  body.append(detailMeta(target));
+  body.append(detailDescription(target, 1200));
+  body.append(detailComments(options.comments));
+  return body;
 }
 
-/** Attach, start a session or worktree, send to chat, open in Kaneo. */
-export function detailActions(target: ChipTarget): HTMLElement {
-  const actions = el("div", { className: "toolbar" });
-  actionButton(actions, "Attach", () => attachTask(target));
-  actionButton(actions, "New session", () => startSessionForTask(target).then(() => undefined));
-  actionButton(actions, "Worktree session", () =>
-    startSessionForTask(target, { worktree: true }).then(() => undefined),
+/** The footer: the worktree toggle, a full-width Start session, then chat. */
+export function detailFooter(
+  target: ChipTarget,
+  options: Pick<DetailOptions, "worktree" | "onWorktreeChange" | "showChatActions">,
+): HTMLElement {
+  const footer = el("div", { className: "detail-footer" });
+  const toggle = el("div");
+  footer.append(toggle);
+  mountCheckbox(toggle, {
+    label: "Create in a new worktree",
+    checked: options.worktree,
+    onChange: options.onWorktreeChange,
+  });
+
+  const start = el("div", { className: "detail-start block" });
+  footer.append(start);
+  actionButton(
+    start,
+    "Start session",
+    () => startSessionForTask(target, { worktree: options.worktree }).then(() => undefined),
+    { variant: "default", block: true },
   );
-  actionButton(actions, "Send to chat", () => composeChip(target));
-  actionButton(actions, "Open in Kaneo", () => openInKaneo(target));
-  return actions;
+
+  if (options.showChatActions !== false) {
+    const secondary = el("div", { className: "toolbar detail-secondary" });
+    footer.append(secondary);
+    actionButton(secondary, "Attach", () => attachTask(target));
+    actionButton(secondary, "Send to chat", () => composeChip(target));
+  }
+  return footer;
 }
 
-/** A "Move to" row of buttons, one per column other than the current one. */
-export function detailMove(
-  columns: BoardColumn[],
-  currentStatus: string,
-  onMoveTo: (columnId: string) => void,
-): HTMLElement | null {
-  const targets = columns.filter((column) => column.id !== currentStatus);
-  if (targets.length === 0) return null;
-  const row = el("div", { className: "toolbar" });
-  row.append(el("span", { className: "eyebrow" }, "Move to"));
-  for (const column of targets) {
-    actionButton(row, column.name, async () => onMoveTo(column.id));
-  }
-  return row;
+/** A full detail: header bar, scrolling body and footer. */
+export function detailScaffold(
+  target: ChipTarget,
+  options: DetailOptions & { onBack: () => void },
+): HTMLElement {
+  const shell = el("div", { className: "detail" });
+  shell.append(detailHeader(target, options.onBack));
+  shell.append(detailBody(target, options));
+  shell.append(detailFooter(target, options));
+  return shell;
 }

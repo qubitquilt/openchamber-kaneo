@@ -5,7 +5,7 @@ import { pruneSessionLinks, sanitizeSessionLinks, type SessionLink } from "./ses
 
 /** Selection persisted between surfaces, kept in the extension's own storage. */
 export interface Preferences {
-  [key: string]: string | null;
+  [key: string]: string | null | boolean;
   workspaceId: string | null;
   projectId: string | null;
   /** Task shown in the panel's detail sheet, shared with the board page. */
@@ -19,6 +19,8 @@ export interface Preferences {
   /** `"me"` shows only tasks assigned to the account. */
   assigneeFilter: "any" | "me";
   labelFilter: string | null;
+  /** Whether "Start session" creates a worktree, like Linear's toggle. */
+  createInWorktree: boolean;
 }
 
 const PREFERENCES_KEY = "preferences";
@@ -33,6 +35,7 @@ const DEFAULTS: Preferences = {
   view: "list",
   assigneeFilter: "any",
   labelFilter: null,
+  createInWorktree: false,
 };
 
 function sanitize(raw: unknown): Preferences {
@@ -50,6 +53,7 @@ function sanitize(raw: unknown): Preferences {
     view: value.view === "kanban" || value.view === "mine" ? value.view : "list",
     assigneeFilter: value.assigneeFilter === "me" ? "me" : "any",
     labelFilter: typeof value.labelFilter === "string" ? value.labelFilter : null,
+    createInWorktree: value.createInWorktree === true,
   };
 }
 

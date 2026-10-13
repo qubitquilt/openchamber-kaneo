@@ -17,17 +17,7 @@ import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
 import { reportFailure, type ChipTarget } from "../shared/attachments";
 import { labelChip } from "../shared/chips";
-import {
-  detailActions,
-  detailComments,
-  detailDescription,
-  detailHead,
-  detailLabels,
-  detailMeta,
-  detailMetaLine,
-  detailMove,
-  type CommentState,
-} from "../shared/detail";
+import { detailScaffold, type CommentState } from "../shared/detail";
 import { loadPreferences, savePreferences, type Preferences } from "../shared/preferences";
 import { watchSessionLifecycle } from "../shared/lifecycle";
 import { renderTaskRow } from "../shared/list-row";
@@ -101,6 +91,7 @@ const state: BoardState = {
     view: "list",
     assigneeFilter: "any",
     labelFilter: null,
+    createInWorktree: false,
   },
   search: "",
   detailId: null,
@@ -753,53 +744,41 @@ function ensureComments(taskId: string): void {
     });
 }
 
-function renderPreview(target: ChipTarget): HTMLElement {
-  const { task } = target;
-  ensureComments(task.id);
-  const wrap = el("div", { style: "display:flex; flex-direction:column; gap:8px;" });
-
-  const head = el("div", { className: "preview-head" });
-  // A task from the Mine tab lives in another project, so its status cannot be
-  // moved with this board's columns; show it as a plain pill instead.
-  if (columnOf(task)) {
-    const stateHolder = el("div");
-    head.append(stateHolder);
-    mountMenu(stateHolder, {
-      label: target.columnName,
-      items: (state.board?.columns ?? [])
-        .filter((column) => column.id !== task.status)
-        .map((column) => ({ id: column.id, label: column.name })),
-      onSelect: (id) => {
-        void moveTask(task.id, id);
-      },
-    });
-  } else {
-    head.append(el("span", { className: "state-pill" }, target.columnName));
-  }
-  head.append(el("span", { className: "task-key" }, target.ticketId));
-  const closeHolder = el("div", { style: "margin-left:auto;" });
-  head.append(closeHolder);
-  mountButton(closeHolder, {
-    label: "Close",
-    variant: "ghost",
-    size: "sm",
-    onClick: () => {
-      state.detailId = null;
-      state.mineDetail = null;
-      render();
+/**
+ * The shared task detail, drawing the status picker and comments like the rail
+ * panel. A task from the Mine tab lives in another project, so it gets no
+ * status picker: this board's columns cannot move it.
+ */
+function renderTaskDetail(target: ChipTarget, onBack: () => void): HTMLElement {
+  ensureComments(target.task.id);
+  const columns = state.board?.columns ?? [];
+  const onBoard = Boolean(columnOf(target.task));
+  const finalColumn = columns.find((column) => column.isFinal);
+  return detailScaffold(target, {
+    columns: onBoard ? columns : [],
+    comments: state.comments[target.task.id] ?? null,
+    worktree: state.preferences.createInWorktree,
+    onWorktreeChange: (worktree) => {
+      state.preferences = { ...state.preferences, createInWorktree: worktree };
+      void savePreferences({ createInWorktree: worktree });
     },
+    onMove: (columnId) => void moveTask(target.task.id, columnId),
+    onCloseIssue: () => {
+      if (finalColumn) void moveTask(target.task.id, finalColumn.id);
+    },
+    canCloseIssue: onBoard && Boolean(finalColumn) && target.task.status !== finalColumn?.id,
+    onBack,
   });
-  wrap.append(head, el("div", { className: "preview-title" }, task.title));
+}
 
-  const meta = detailMetaLine(target);
-  if (meta.childElementCount > 0) wrap.append(meta);
-  const labels = detailLabels(target);
-  if (labels) wrap.append(labels);
-  wrap.append(detailDescription(target, 1200));
-  const comments = detailComments(state.comments[task.id] ?? null);
-  if (comments) wrap.append(comments);
-  wrap.append(detailActions(target));
-  return wrap;
+function dismissPreview(): void {
+  state.detailId = null;
+  state.mineDetail = null;
+  render();
+}
+
+function renderPreview(target: ChipTarget): HTMLElement {
+  return renderTaskDetail(target, dismissPreview);
 }
 
 function renderColumn(column: BoardColumn): HTMLElement {
@@ -905,28 +884,13 @@ function renderCard(task: BoardTask): HTMLElement {
 }
 
 function renderDetail(task: BoardTask): HTMLElement {
-  ensureComments(task.id);
-  const target = targetFor(task);
-
   const backdrop = el("div", { className: "backdrop" });
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) close();
   });
 
   const card = el("div", { className: "backdrop-card" });
-  card.append(detailHead(target, close));
-  card.append(detailMeta(target));
-  const labels = detailLabels(target);
-  if (labels) card.append(labels);
-  card.append(detailDescription(target, 1200));
-  const comments = detailComments(state.comments[task.id] ?? null);
-  if (comments) card.append(comments);
-  card.append(detailActions(target));
-  const move = detailMove(state.board?.columns ?? [], task.status, (columnId) => {
-    void moveTask(task.id, columnId);
-  });
-  if (move) card.append(move);
-
+  card.append(renderTaskDetail(targetFor(task), close));
   backdrop.append(card);
   return backdrop;
 }

@@ -81,6 +81,18 @@ export interface BoardTask {
   externalLinks?: Array<{ id: string; url: string; type?: string | null }>;
 }
 
+/** `GET /column/{projectId}`: the stored column, richer than the board view. */
+export interface Column {
+  id: string;
+  projectId: string;
+  name: string;
+  slug: string;
+  position: number;
+  icon?: string | null;
+  color?: string | null;
+  isFinal: boolean;
+}
+
 export interface BoardColumn {
   /** The column slug, same as `slug`. */
   id: string;

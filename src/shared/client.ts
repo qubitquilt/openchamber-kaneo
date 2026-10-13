@@ -1,8 +1,9 @@
-import { PAGE_SIZE } from "./constants";
+import { TASKS_PER_PAGE } from "./constants";
 import type {
   ApiError,
   AssignedTasksResponse,
   Board,
+  Column,
   BoardPagination,
   BoardResponse,
   BoardTask,
@@ -50,16 +51,6 @@ export class KaneoError extends Error {
     this.name = "KaneoError";
     this.status = status;
     this.code = code;
-  }
-
-  /** True when the token is missing, expired or lacks the scope. */
-  get isAuthProblem(): boolean {
-    return this.status === 401 || this.status === 403;
-  }
-
-  /** True when the path or a query value was rejected before the route ran. */
-  get isBadRequest(): boolean {
-    return this.status === 400 || this.status === 404 || this.status === 409;
   }
 }
 
@@ -113,6 +104,8 @@ export interface KaneoClient {
     options?: { projectId?: string; limit?: number },
   ): Promise<SearchResponse>;
   listLabels(workspaceId: string): Promise<Label[]>;
+  /** A project's columns, for turning a task's status slug into a name. */
+  listColumns(projectId: string): Promise<Column[]>;
   listComments(taskId: string): Promise<Comment[]>;
   createComment(taskId: string, content: string): Promise<Comment>;
   createTask(projectId: string, input: CreateTaskInput): Promise<TaskDetail>;
@@ -173,7 +166,7 @@ export function createKaneoClient(request: RequestFn): KaneoClient {
     const first = await call<BoardResponse>({
       method: "GET",
       path: `/task/tasks/${encoded}`,
-      query: { page: 1, limit: PAGE_SIZE },
+      query: { page: 1, limit: TASKS_PER_PAGE },
     });
 
     const board = first.data;
@@ -185,7 +178,7 @@ export function createKaneoClient(request: RequestFn): KaneoClient {
       const next = await call<BoardResponse>({
         method: "GET",
         path: `/task/tasks/${encoded}`,
-        query: { page, limit: PAGE_SIZE },
+        query: { page, limit: TASKS_PER_PAGE },
       });
       for (const column of next.data.columns) {
         const target = board.columns.find((entry) => entry.id === column.id);
@@ -253,6 +246,9 @@ export function createKaneoClient(request: RequestFn): KaneoClient {
         method: "GET",
         path: `/label/workspace/${encodeURIComponent(workspaceId)}`,
       }),
+
+    listColumns: (projectId) =>
+      call<Column[]>({ method: "GET", path: `/column/${encodeURIComponent(projectId)}` }),
 
     listComments: (taskId) =>
       call<Comment[]>({ method: "GET", path: `/comment/${encodeURIComponent(taskId)}` }),

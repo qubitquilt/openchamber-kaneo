@@ -21,7 +21,6 @@ import {
   openInKaneo,
   reportFailure,
   startSessionWithChip,
-  startWorktreeWithChip,
 } from "../shared/attachments";
 import {
   loadPreferences,
@@ -31,7 +30,14 @@ import {
 } from "../shared/preferences";
 import { watchSessionLifecycle } from "../shared/lifecycle";
 import { renderTaskRow } from "../shared/list-row";
-import { dueLabel, isOverdue, priorityLabel, ticketIdOf, relativeTimeOf } from "../shared/format";
+import {
+  columnLabel,
+  dueLabel,
+  isOverdue,
+  priorityLabel,
+  relativeTimeOf,
+  ticketIdOf,
+} from "../shared/format";
 import { renderMarkdown } from "../shared/dom";
 import { installStyles } from "../shared/styles";
 import { kaneoWordmark } from "../shared/logo";
@@ -240,7 +246,6 @@ function dedupeLabels(labels: Label[]): Label[] {
 async function moveTask(taskId: string, columnId: string): Promise<void> {
   const task = findTask(taskId);
   if (!task || task.status === columnId) return;
-  const columnName = columnOf(task)?.name ?? task.status;
   const target = state.board?.columns.find((entry) => entry.id === columnId)?.name ?? columnId;
 
   // Move locally first so the card lands under the pointer, then confirm with
@@ -264,7 +269,6 @@ async function moveTask(taskId: string, columnId: string): Promise<void> {
     render();
     await reportFailure(`Move to ${target}`, error);
   }
-  void columnName;
 }
 
 /* ----------------------------------------------------------------- render */
@@ -746,7 +750,7 @@ function renderPreview(task: BoardTask): HTMLElement {
   const fragment = document.createDocumentFragment();
   const wrap = el("div", { style: "display:flex; flex-direction:column; gap:8px;" });
 
-  const columnName = columnById(task.status)?.name ?? task.status;
+  const columnName = columnById(task.status)?.name ?? columnLabel(task.status);
   const ticketId = ticketFor(task);
   const target = {
     task,
@@ -870,7 +874,7 @@ function renderPreview(task: BoardTask): HTMLElement {
     await host.toast({ kind: "success", message: `Session started for ${ticketId}.` });
   });
   previewAction(actions, "Worktree session", async () => {
-    const result = await startWorktreeWithChip(target);
+    const result = await startSessionWithChip(target, { worktree: true });
     if (result.sessionId === null) {
       await host.toast({
         kind: "error",
@@ -1039,7 +1043,7 @@ function renderCard(task: BoardTask): HTMLElement {
 
 function renderDetail(task: BoardTask): HTMLElement {
   const ticketId = ticketFor(task);
-  const columnName = columnOf(task)?.name ?? task.status;
+  const columnName = columnOf(task)?.name ?? columnLabel(task.status);
   const target = {
     task,
     ticketId,
@@ -1107,7 +1111,7 @@ function renderDetail(task: BoardTask): HTMLElement {
     await host.toast({ kind: "success", message: `Session started for ${ticketId}.` });
   });
   action(actions, "Worktree session", async () => {
-    const result = await startWorktreeWithChip(target);
+    const result = await startSessionWithChip(target, { worktree: true });
     if (result.sessionId === null) {
       await host.toast({
         kind: "error",

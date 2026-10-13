@@ -21,9 +21,8 @@ import {
   openInKaneo,
   reportFailure,
   startSessionWithChip,
-  startWorktreeWithChip,
 } from "../shared/attachments";
-import { dueLabel, priorityLabel, ticketIdOf } from "../shared/format";
+import { columnLabel, dueLabel, priorityLabel, ticketIdOf } from "../shared/format";
 import {
   loadPreferences,
   rememberSession,
@@ -672,7 +671,7 @@ function renderDetail(task: BoardTask): HTMLElement {
     await host.toast({ kind: "success", message: `Session started for ${ticketId}.` });
   });
   button(actions, "Worktree session", async () => {
-    const result = await startWorktreeWithChip(target);
+    const result = await startSessionWithChip(target, { worktree: true });
     if (result.sessionId === null) {
       await host.toast({
         kind: "error",
@@ -766,7 +765,7 @@ async function attachMineRow(taskId: string): Promise<void> {
       ticketId: assigned?.ticketId ?? ticketIdOf(state.project?.slug ?? "", detail.number),
       workspaceId: state.context?.workspaceId ?? detail.workspaceId ?? "",
       projectName: assigned?.projectName ?? state.project?.name,
-      columnName: assigned?.statusName ?? detail.status,
+      columnName: assigned?.statusName ?? columnLabel(detail.status),
     });
     await host.toast({ kind: "success", message: "Task attached to the chat." });
   } catch (error) {

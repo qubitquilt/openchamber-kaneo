@@ -14,8 +14,8 @@ export const WEB_ORIGIN = API_ORIGIN.replace(/\/api\/?$/, "");
 /** Chip provider id. Matches `panel.id`, so OpenChamber groups our chips. */
 export const PROVIDER_ID = "kaneo";
 
-/** Highest accepted response size for a single host request, in characters. */
-export const PAGE_SIZE = 100;
+/** Tasks requested per board page. Kaneo accepts 1 to 100 and caps the response. */
+export const TASKS_PER_PAGE = 100;
 
 export const PRIORITIES = ["no-priority", "low", "medium", "high", "urgent"] as const;
 

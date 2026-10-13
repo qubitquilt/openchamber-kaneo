@@ -9,6 +9,23 @@ export function ticketIdOf(projectSlug: string, number: number | null | undefine
   return `${projectSlug.toUpperCase()}-${number}`;
 }
 
+/**
+ * Human wording for a Kaneo column when only its slug is at hand: the chip's
+ * status line must never read `in-progress`. A value that already looks like a
+ * display name (contains a space) is returned as typed, so a board's own
+ * column name always wins.
+ */
+export function columnLabel(nameOrSlug: string | null | undefined): string {
+  const value = (nameOrSlug ?? "").trim();
+  if (value === "") return "";
+  if (value.includes(" ")) return value;
+  return value
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export function taskUrl(workspaceId: string, projectId: string, taskId: string): string {
   return `${WEB_ORIGIN}/dashboard/workspace/${workspaceId}/project/${projectId}/task/${taskId}`;
 }

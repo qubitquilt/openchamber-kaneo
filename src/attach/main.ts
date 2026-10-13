@@ -22,7 +22,7 @@ import { PRIORITIES, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
 import { attachChip, startSessionWithChip } from "../shared/attachments";
-import { firstLine, priorityLabel, ticketIdOf } from "../shared/format";
+import { columnLabel, firstLine, priorityLabel, ticketIdOf } from "../shared/format";
 import { loadPreferences } from "../shared/preferences";
 import { installStyles } from "../shared/styles";
 import { kaneoWordmark } from "../shared/logo";
@@ -199,7 +199,7 @@ async function attach(task: BoardTask): Promise<void> {
       ticketId: ticketFor(task),
       workspaceId: state.context?.workspaceId ?? "",
       projectName: state.project?.name,
-      columnName: state.columnNames[task.status] ?? task.status,
+      columnName: state.columnNames[task.status] ?? columnLabel(task.status),
     });
     await host.toast({ kind: "success", message: `${ticketFor(task)} attached to the chat.` });
     await host.close();
@@ -218,7 +218,7 @@ async function attachAndStart(task: BoardTask): Promise<void> {
     ticketId: ticketFor(task),
     workspaceId: state.context?.workspaceId ?? "",
     projectName: state.project?.name,
-    columnName: state.columnNames[task.status] ?? task.status,
+    columnName: state.columnNames[task.status] ?? columnLabel(task.status),
   });
   if (result.sessionId === null) {
     await host.toast({

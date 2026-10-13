@@ -1,7 +1,7 @@
 import { createKaneoClient } from "../shared/client";
 import { host } from "../shared/host";
 import { chipFor } from "../shared/attachments";
-import { ticketIdOf } from "../shared/format";
+import { columnLabel, ticketIdOf } from "../shared/format";
 import { loadPreferences } from "../shared/preferences";
 
 /**
@@ -60,10 +60,17 @@ host.onResolve(async ({ command, args }) => {
 
   const task = await client.getTaskByTicketId(ticketId, preferences.workspaceId ?? undefined);
 
+  // Name the column rather than shipping its slug on the chip; a lookup that
+  // fails falls back to the prettified slug.
+  const columnName = await client
+    .listColumns(task.projectId)
+    .then((columns) => columns.find((column) => column.slug === task.status)?.name)
+    .catch(() => undefined);
+
   return chipFor({
     task,
     ticketId,
     workspaceId: task.workspaceId ?? preferences.workspaceId ?? "",
-    columnName: task.status,
+    columnName: columnName ?? columnLabel(task.status),
   });
 });

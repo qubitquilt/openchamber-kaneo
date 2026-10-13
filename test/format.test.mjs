@@ -2,10 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  firstLine,
+  branchForTicket,
+  columnGlyphOf,
+  columnLabel,
   dueLabel,
+  firstLine,
   isOverdue,
   priorityLabel,
+  relativeTimeOf,
+  sessionComment,
   taskContext,
   taskSummary,
   taskToMarkdown,
@@ -175,13 +180,6 @@ test("taskContext is the text the model reads from an attached chip", () => {
   assert.ok(context.indexOf("https://kaneo.example/x") < context.indexOf("It throws"));
 });
 
-import {
-  branchForTicket,
-  columnGlyphOf,
-  relativeTimeOf,
-  sessionComment,
-} from "../build/format.mjs";
-
 test("relativeTimeOf buckets like the reference rows", () => {
   const now = Date.parse("2026-10-13T12:00:00.000Z");
   const ago = (ms) => new Date(now - ms).toISOString();
@@ -223,4 +221,17 @@ test("sessionComment is one link when a web URL is configured", () => {
     sessionComment("completed", "  ", "https://oc.example", "s1"),
     "[OpenChamber session completed](https://oc.example/?session=s1) — Untitled session",
   );
+});
+
+test("columnLabel prettifies a slug and leaves a display name alone", () => {
+  assert.equal(columnLabel("to-do"), "To Do");
+  assert.equal(columnLabel("in-progress"), "In Progress");
+  assert.equal(columnLabel("in-review"), "In Review");
+  assert.equal(columnLabel("done"), "Done");
+  assert.equal(columnLabel("needs-qa_review"), "Needs Qa Review");
+  // A board's own column name always wins.
+  assert.equal(columnLabel("QA Blocked"), "QA Blocked");
+  assert.equal(columnLabel(""), "");
+  assert.equal(columnLabel(null), "");
+  assert.equal(columnLabel(undefined), "");
 });

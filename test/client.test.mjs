@@ -187,14 +187,12 @@ test("an API error becomes a KaneoError carrying the status and code", async () 
       assert.equal(error.status, 404);
       assert.equal(error.code, "NOT_FOUND");
       assert.equal(error.message, "Task not found");
-      assert.equal(error.isBadRequest, true);
-      assert.equal(error.isAuthProblem, false);
       return true;
     },
   );
 });
 
-test("a 401 and a 403 both read as an auth problem", async () => {
+test("a rejected token carries its 401 and code", async () => {
   const { request } = stub({
     "GET /api/project": () => ({
       status: 401,
@@ -205,7 +203,12 @@ test("a 401 and a 403 both read as an auth problem", async () => {
 
   await assert.rejects(
     () => client.listProjects("w1"),
-    (error) => error instanceof KaneoError && error.isAuthProblem,
+    (error) => {
+      assert.ok(error instanceof KaneoError);
+      assert.equal(error.status, 401);
+      assert.equal(error.code, "UNAUTHORIZED");
+      return true;
+    },
   );
 });
 

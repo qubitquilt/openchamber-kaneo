@@ -24,6 +24,11 @@ export interface ChipTarget {
   ticketId: string;
   workspaceId: string;
   projectName?: string;
+  /**
+   * The task's column as a display name, never its slug; callers that hold
+   * only the status pass `columnLabel(status)`. It reaches the chip's model
+   * context, so a slug here would read `in-progress` next to `In Progress`.
+   */
   columnName?: string;
 }
 
@@ -64,45 +69,42 @@ export async function attachChip(target: ChipTarget): Promise<void> {
   await host.attach(chipFor(target));
 }
 
-/** Attach, then open a fresh session with the task as first message. */
+/**
+ * Attach, then open a fresh session with the task as first message.
+ *
+ * With `worktree: true` the session opens in a new worktree whose branch is
+ * named from the ticket, like Linear's start-from-issue. `branch` reports the
+ * branch the host created, not the one we asked for: it may adjust the name,
+ * and the success toasts must not claim otherwise. `sessionId` is `null` when
+ * the worktree was created but the session was not; the worktree is kept, so
+ * the caller should not blind-retry.
+ */
 export async function startSessionWithChip(
   target: ChipTarget,
-  options: { projectId?: string } = {},
-): Promise<{ sessionId: string | null; sent: string; failure?: string }> {
-  const result = await host.startSession({
-    ...chipFor(target),
-    navigation: "preserve",
-    text: `Work on ${target.ticketId}. Start by reading the task and restating the plan before changing anything.`,
-    ...(options.projectId ? { projectId: options.projectId } : {}),
-  });
-  if (result.sessionId === null) {
-    return { sessionId: null, sent: result.sent, failure: result.failure };
-  }
-  return { sessionId: result.sessionId, sent: result.sent };
-}
-
-/**
- * Attach, then open the session in a new worktree whose branch is named from
- * the ticket, like Linear's start-from-issue. `sessionId` is `null` when the
- * worktree was created but the session was not; the worktree is kept either
- * way, so the caller should not blind-retry.
- */
-export async function startWorktreeWithChip(
-  target: ChipTarget,
-  options: { projectId?: string } = {},
+  options: { projectId?: string; worktree?: boolean } = {},
 ): Promise<{ sessionId: string | null; sent: string; failure?: string; branch?: string }> {
-  const branch = branchForTicket(target.ticketId);
+  const requestedBranch = options.worktree ? branchForTicket(target.ticketId) : undefined;
   const result = await host.startSession({
     ...chipFor(target),
     navigation: "preserve",
-    worktree: { kind: "new", name: branch },
+    ...(requestedBranch ? { worktree: { kind: "new" as const, name: requestedBranch } } : {}),
     text: `Work on ${target.ticketId}. Start by reading the task and restating the plan before changing anything.`,
     ...(options.projectId ? { projectId: options.projectId } : {}),
   });
+
   if (result.sessionId === null) {
-    return { sessionId: null, sent: result.sent, failure: result.failure, branch };
+    return {
+      sessionId: null,
+      sent: result.sent,
+      failure: result.failure,
+      branch: result.worktree.branch,
+    };
   }
-  return { sessionId: result.sessionId, sent: result.sent, branch };
+  return {
+    sessionId: result.sessionId,
+    sent: result.sent,
+    branch: result.worktree?.branch ?? requestedBranch,
+  };
 }
 
 /** Put the task in the chat box without sending it. */

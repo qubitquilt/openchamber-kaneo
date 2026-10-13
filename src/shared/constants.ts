@@ -12,7 +12,7 @@ export const API_ORIGIN = "https://kaneo.qubitquilt.dev";
 export const WEB_ORIGIN = API_ORIGIN.replace(/\/api\/?$/, "");
 
 /** Chip provider id. Matches `panel.id`, so OpenChamber groups our chips. */
-export const PROVIDER_ID = "kaneo";
+export const PROVIDER_ID = "kaneo-tasks";
 
 /** Tasks requested per board page. Kaneo accepts 1 to 100 and caps the response. */
 export const TASKS_PER_PAGE = 100;

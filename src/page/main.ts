@@ -113,6 +113,18 @@ function describe(error: unknown): string {
   return String(error);
 }
 
+/**
+ * Describe an error and log the full value to the console. The banner only
+ * carries the code and a short message; a `KaneoError.message` is the server's
+ * response text and can include internal paths or, with a future server bug,
+ * another tenant's data. The full value is for the developer, in their
+ * DevTools console, not for the user.
+ */
+function describeAndLog(action: string, error: unknown): string {
+  console.error(`${action} failed:`, error);
+  return describe(error);
+}
+
 function ticketFor(task: BoardTask): string {
   return ticketIdOf(state.project?.slug ?? "", task.number);
 }
@@ -181,7 +193,9 @@ async function load(): Promise<void> {
     }
 
     state.loading = false;
-    state.error = context.projectsError ? describe(context.projectsError) : null;
+    state.error = context.projectsError
+      ? describeAndLog("List projects", context.projectsError)
+      : null;
     render();
 
     const [boardResult, labelResult, mineResult] = await Promise.allSettled([
@@ -192,7 +206,7 @@ async function load(): Promise<void> {
         : Promise.resolve({ tasks: [], total: 0 }),
     ]);
     if (boardResult.status === "rejected") {
-      state.error = describe(boardResult.reason);
+      state.error = describeAndLog("Load board", boardResult.reason);
       state.board = null;
     } else if (boardResult.value) {
       state.board = boardResult.value.board;
@@ -218,7 +232,7 @@ async function load(): Promise<void> {
     state.error =
       error instanceof NoWorkspaceError
         ? error.message
-        : `Could not reach Kaneo. ${describe(error)}`;
+        : `Could not reach Kaneo. ${describeAndLog("Reach Kaneo", error)}`;
     render();
   }
 }
@@ -738,6 +752,7 @@ function ensureComments(taskId: string): void {
       render();
     })
     .catch((error: unknown) => {
+      console.error("Load comments failed:", error);
       state.comments[taskId] = {
         loading: false,
         error: error instanceof Error ? error.message : String(error),

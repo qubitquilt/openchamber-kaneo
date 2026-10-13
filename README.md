@@ -113,3 +113,17 @@ the panel.
 - The newest 50 task-linked sessions are remembered for those comments; older links fall off. A session
   that outlives every open Kaneo surface posts no further comments, because the watcher lives in the
   surface, unlike Linear's server-side event hub.
+
+## Contributing
+
+PRs run `npm run check` in CI, which lints, typechecks, checks the manifest, builds and tests. A
+contributor who has run the same gate locally and confirmed the panel, the `+` picker and the board page
+in OpenChamber lands a faster review. See `CONTRIBUTING.md` for the workflow and `AGENTS.md` for the
+trust boundaries and code conventions a PR is expected to respect.
+
+## Security
+
+Report a vulnerability through `SECURITY.md`. The four entry HTMLs each carry a `Content-Security-Policy`
+meta; the canonical line lives in `scripts/csp-meta.mjs` and the build fails when an entry drifts.
+The only network egress is `host.request`, locked to the origin declared in
+`src/shared/constants.ts` and mirrored in the manifest.

@@ -2,6 +2,31 @@ import { host } from "./host";
 import { loadPreferences, savePreferences } from "./preferences";
 import type { CurrentUser, ProjectListItem, Workspace } from "./types";
 
+/**
+ * One place that talks to `host.storage`. Every read passes its raw value
+ * through a sanitizer so a hand-edited storage blob from outside the extension
+ * cannot inject a novel value; every write goes through `JSON.parse(JSON.stringify)`
+ * to strip functions, `Map`s and `Date`s that the SDK's `JsonValue` shape would
+ * reject. A future key only has to be added in one place, not in four
+ * try/catch blocks.
+ */
+async function read<T>(key: string, sanitize: (raw: unknown) => T): Promise<T> {
+  try {
+    return sanitize(await host.storage.get(key));
+  } catch {
+    return sanitize(undefined);
+  }
+}
+
+async function write<T>(key: string, value: T): Promise<void> {
+  try {
+    const plain = JSON.parse(JSON.stringify(value));
+    await host.storage.set(key, plain);
+  } catch {
+    // Storage is a convenience. A full namespace must not break the panel.
+  }
+}
+
 export interface WorkspaceContext {
   user: CurrentUser | null;
   workspaces: Workspace[];
@@ -93,23 +118,17 @@ interface CacheEntry {
 }
 
 async function readCache(): Promise<CacheEntry | null> {
-  try {
-    const entry = (await host.storage.get(CACHE_KEY)) as CacheEntry | undefined;
-    return entry && typeof entry.at === "number" && entry.context ? entry : null;
-  } catch {
-    return null;
-  }
+  return read(CACHE_KEY, (raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const entry = raw as Partial<CacheEntry>;
+    return entry && typeof entry.at === "number" && entry.context ? (entry as CacheEntry) : null;
+  });
 }
 
 async function writeCache(context: WorkspaceContext): Promise<void> {
   // Serializing and parsing again hands the host a plain object, which is what
   // its `JsonValue` parameter requires; the interface itself stays typed.
-  const plain = JSON.parse(JSON.stringify({ at: Date.now(), context }));
-  try {
-    await host.storage.set(CACHE_KEY, plain);
-  } catch {
-    // A cache that cannot persist only costs a request.
-  }
+  await write(CACHE_KEY, { at: Date.now(), context });
 }
 
 export async function invalidateBootstrapCache(): Promise<void> {

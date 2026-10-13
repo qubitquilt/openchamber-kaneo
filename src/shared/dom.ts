@@ -2,6 +2,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { host } from "./host";
 
+export { safeBackgroundColor } from "./colors";
+
 /**
  * Props for `el`. `style` takes a CSS string rather than a declaration, and
  * `on<Event>` handlers are attached as listeners instead of assigned.

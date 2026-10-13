@@ -1,4 +1,5 @@
 import { PROVIDER_ID } from "./constants";
+import { KaneoError } from "./client";
 import { host } from "./host";
 import { rememberSession } from "./preferences";
 import { branchForTicket, taskContext, taskToMarkdown, taskUrl } from "./format";
@@ -170,9 +171,19 @@ export async function openInKaneo(target: ChipTarget): Promise<void> {
   await host.openUrl(chipUrl(target));
 }
 
-/** Everything the panel offers on one task, gathered into a toast on failure. */
+/**
+ * Everything the panel offers on one task, gathered into a toast on failure.
+ *
+ * The toast carries the action and the error code (or "Unknown error"); the
+ * full message is logged to the console for the developer. A `KaneoError`
+ * message is the server's response text, which can carry internal paths or
+ * query strings we do not want shown to the user, and a future server bug
+ * could include someone else's data in it. The user gets the action and a
+ * short code; the developer gets the rest in their console.
+ */
 export async function reportFailure(action: string, error: unknown): Promise<void> {
-  const message =
-    error instanceof Error ? `${action} failed: ${error.message}` : `${action} failed.`;
+  console.error(`${action} failed:`, error);
+  const code = error instanceof KaneoError ? error.code : null;
+  const message = code ? `${action} failed (${code}).` : `${action} failed.`;
   await host.toast({ kind: "error", message: message.slice(0, 400), dismiss: true });
 }

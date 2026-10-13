@@ -12,7 +12,7 @@ import {
 } from "@openchamber/sdk/ui";
 
 import { KaneoError, createKaneoClient } from "../shared/client";
-import { PRIORITIES, PRIORITY_RANK, type Priority } from "../shared/constants";
+import { PRIORITIES, PRIORITY_RANK, PROVIDER_ID, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
 import { reportFailure, type ChipTarget } from "../shared/attachments";
@@ -102,6 +102,18 @@ function describe(error: unknown): string {
   if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/**
+ * Describe an error and log the full value to the console. The banner only
+ * carries the code and a short message; a `KaneoError.message` is the server's
+ * response text and can include internal paths or, with a future server bug,
+ * another tenant's data. The full value is for the developer, in their
+ * DevTools console, not for the user.
+ */
+function describeAndLog(action: string, error: unknown): string {
+  console.error(`${action} failed:`, error);
+  return describe(error);
 }
 
 /* --------------------------------------------------------------- filtering */
@@ -222,7 +234,9 @@ async function load(options: { keepDetail?: boolean } = {}): Promise<void> {
     }
 
     state.loading = false;
-    state.error = context.projectsError ? describe(context.projectsError) : null;
+    state.error = context.projectsError
+      ? describeAndLog("List projects", context.projectsError)
+      : null;
     render();
 
     const [boardResult, mineResult, labelResult] = await Promise.allSettled([
@@ -230,7 +244,8 @@ async function load(options: { keepDetail?: boolean } = {}): Promise<void> {
       reloadMine(),
       reloadLabels(),
     ]);
-    if (boardResult.status === "rejected") state.error = describe(boardResult.reason);
+    if (boardResult.status === "rejected")
+      state.error = describeAndLog("Load board", boardResult.reason);
     if (labelResult.status === "rejected") state.labels = [];
     if (mineResult.status === "rejected") {
       state.mine = [];
@@ -250,7 +265,7 @@ async function load(options: { keepDetail?: boolean } = {}): Promise<void> {
     state.error =
       error instanceof NoWorkspaceError
         ? error.message
-        : `Could not reach Kaneo. ${describe(error)}`;
+        : `Could not reach Kaneo. ${describeAndLog("Reach Kaneo", error)}`;
     render();
   }
 }
@@ -626,7 +641,7 @@ function ensureComments(taskId: string): void {
       render();
     })
     .catch((error: unknown) => {
-      state.comments[taskId] = { loading: false, error: describe(error) };
+      state.comments[taskId] = { loading: false, error: describeAndLog("Load comments", error) };
       render();
     });
 }
@@ -752,7 +767,7 @@ host.onReady((ctx) => {
 
 /** Chip clicks land here; a chip click restores the task it came from. */
 host.onItem((item) => {
-  if (!item || !("providerId" in item) || item.providerId !== "kaneo") return;
+  if (!item || !("providerId" in item) || item.providerId !== PROVIDER_ID) return;
   const data = item.data as { taskId?: string } | undefined;
   if (!data?.taskId) return;
   void openDetail(data.taskId);

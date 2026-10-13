@@ -131,6 +131,18 @@ function describe(error: unknown): string {
   return String(error);
 }
 
+/**
+ * Describe an error and log the full value to the console. The banner only
+ * carries the code and a short message; a `KaneoError.message` is the server's
+ * response text and can include internal paths or, with a future server bug,
+ * another tenant's data. The full value is for the developer, in their
+ * DevTools console, not for the user.
+ */
+function describeAndLog(action: string, error: unknown): string {
+  console.error(`${action} failed:`, error);
+  return describe(error);
+}
+
 function ticketFor(task: BoardTask): string {
   return ticketIdOf(state.project?.slug ?? "", task.number);
 }
@@ -190,7 +202,9 @@ async function load(): Promise<void> {
     state.project = resolveProject(context.projects, preferences.projectId, projectSlug);
 
     state.loading = false;
-    state.error = context.projectsError ? describe(context.projectsError) : null;
+    state.error = context.projectsError
+      ? describeAndLog("List projects", context.projectsError)
+      : null;
     render();
 
     if (state.project) {
@@ -210,7 +224,7 @@ async function load(): Promise<void> {
     state.error =
       error instanceof NoWorkspaceError
         ? error.message
-        : `Could not reach Kaneo. ${describe(error)}`;
+        : `Could not reach Kaneo. ${describeAndLog("Reach Kaneo", error)}`;
     render();
   }
 }
@@ -249,7 +263,7 @@ async function searchWorkspace(): Promise<void> {
   } catch (error) {
     if (token !== renderSearch) return;
     state.loading = false;
-    state.error = describe(error);
+    state.error = describeAndLog("Search Kaneo", error);
     renderBody();
   }
 }
@@ -276,7 +290,7 @@ async function attach(task: BoardTask): Promise<void> {
   } catch (error) {
     await host.toast({
       kind: "error",
-      message: `Attach failed: ${describe(error)}`,
+      message: `Attach failed: ${describeAndLog("Attach", error)}`,
       dismiss: true,
     });
   }
@@ -309,7 +323,7 @@ async function createTask(): Promise<void> {
     });
     await attach(created);
   } catch (error) {
-    state.error = describe(error);
+    state.error = describeAndLog("Create task", error);
     render();
   }
 }
@@ -595,7 +609,11 @@ function renderPreview(task: BoardTask | null): HTMLElement {
     size: "sm",
     onClick: () => {
       void attachAndStart(task).catch((error: unknown) => {
-        void host.toast({ kind: "error", message: describe(error), dismiss: true });
+        void host.toast({
+          kind: "error",
+          message: describeAndLog("Start session", error),
+          dismiss: true,
+        });
       });
     },
   });
@@ -747,7 +765,7 @@ function syncComments(taskId: string): void {
       renderBody();
     })
     .catch((error: unknown) => {
-      state.comments[taskId] = { loading: false, error: describe(error) };
+      state.comments[taskId] = { loading: false, error: describeAndLog("Load comments", error) };
       renderBody();
     });
 }

@@ -43,6 +43,28 @@ OpenChamber only calls a declared origin. Change both, or `npm run check:manifes
 - Tests cover `client.ts` and `format.ts` only. Anything that needs the host is verified by opening the
   panel in OpenChamber, not by a unit test.
 
+## Trust boundaries
+
+Four fences, named so a future contributor knows where they sit:
+
+- **Inbound trust.** Anything that comes back from `https://kaneo.qubitquilt.dev` is untrusted. Strings
+  go through `DOMPurify.sanitize` in `src/shared/dom.ts`; user-controlled colors go through
+  `safeBackgroundColor` (in `src/shared/colors.ts`) before they reach a `style=""` attribute; URLs only
+  open through `host.openUrl` after a `^https?://` check.
+- **Outbound trust.** The only network egress is `host.request`, which is locked to the `apiOrigin` in
+  the manifest, which is locked to `API_ORIGIN` in `src/shared/constants.ts`, which is locked by
+  `npm run check:manifest`. Adding a second origin means changing all three.
+- **Storage trust.** The only writer of `host.storage` keys is this extension's code. Reads pass through
+  a sanitizer in `src/shared/preferences.ts` (`read<T>(key, sanitize)`). A new key needs a sanitizer and
+  a test.
+- **Renderer trust.** The renderer never uses `innerHTML` outside `renderMarkdown` in
+  `src/shared/dom.ts`. If you need HTML somewhere new, route it through `renderMarkdown` or extend `el()`;
+  do not call `innerHTML` from a panel or page.
+
+The four entry HTMLs (`panel/*.html`, `background/index.html`) each carry a matching
+`Content-Security-Policy` meta. The canonical line lives in `scripts/csp-meta.mjs`; `check:manifest`
+fails when any entry drifts from it.
+
 ## Before you call a task done
 
 ```sh

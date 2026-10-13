@@ -13,13 +13,13 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test scripts eslint.config.mjs",
     "lint:fix": "eslint src test scripts eslint.config.mjs --fix",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json eslint.config.mjs README.md AGENTS.md",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json eslint.config.mjs README.md AGENTS.md",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json eslint.config.mjs README.md AGENTS.md .github/**/*.md .github/**/*.yml",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json eslint.config.mjs README.md AGENTS.md .github/**/*.md .github/**/*.yml",
     "check:manifest": "node scripts/check-manifest.mjs",
     "test": "npm run build:test && node --test test/*.test.mjs",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run check:manifest && npm run build && npm test",
     "clean": "node -e \"for (const f of ['panel/main.js','panel/page.js','panel/attach.js','background/main.js']) require('node:fs').rmSync(f,{force:true}); require('node:fs').rmSync('build',{recursive:true,force:true})\"",
-    "build:test": "esbuild src/shared/format.ts src/shared/client.ts src/shared/session-links.ts --bundle --format=esm --platform=neutral --target=es2022 --outdir=build --out-extension:.js=.mjs"
+    "build:test": "esbuild src/shared/format.ts src/shared/client.ts src/shared/session-links.ts src/shared/colors.ts --bundle --format=esm --platform=neutral --target=es2022 --outdir=build --out-extension:.js=.mjs"
   },
   "openchamber": {
     "apiVersion": 1,
@@ -28,7 +28,7 @@
     },
     "contributes": {
       "panel": {
-        "id": "kaneo",
+        "id": "kaneo-tasks",
         "name": "Kaneo tasks",
         "icon": "assets/kaneo.svg",
         "entry": "panel/index.html"

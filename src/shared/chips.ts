@@ -1,4 +1,4 @@
-import { el } from "./dom";
+import { el, safeBackgroundColor } from "./dom";
 
 /**
  * The small inline chips the list rows, the previews and the detail sheets all
@@ -14,7 +14,7 @@ export function labelChip(label: { name: string; color: string }): HTMLElement {
   return el(
     "span",
     { className: "label-chip" },
-    el("span", { className: "label-dot", style: `background:${label.color}` }),
+    el("span", { className: "label-dot", style: `background:${safeBackgroundColor(label.color)}` }),
     label.name,
   );
 }

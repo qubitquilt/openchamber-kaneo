@@ -3,6 +3,31 @@ import type { Priority } from "./constants";
 import { PRIORITY_RANK } from "./constants";
 import { pruneSessionLinks, sanitizeSessionLinks, type SessionLink } from "./session-links";
 
+/**
+ * One place that talks to `host.storage`. Every read passes its raw value
+ * through a sanitizer so a hand-edited storage blob from outside the extension
+ * cannot inject a novel value; every write goes through `JSON.parse(JSON.stringify)`
+ * to strip functions, `Map`s and `Date`s that the SDK's `JsonValue` shape would
+ * reject. A future key only has to be added in one place, not in four
+ * try/catch blocks.
+ */
+async function read<T>(key: string, sanitize: (raw: unknown) => T): Promise<T> {
+  try {
+    return sanitize(await host.storage.get(key));
+  } catch {
+    return sanitize(undefined);
+  }
+}
+
+async function write<T>(key: string, value: T): Promise<void> {
+  try {
+    const plain = JSON.parse(JSON.stringify(value));
+    await host.storage.set(key, plain);
+  } catch {
+    // Storage is a convenience. A full namespace must not break the panel.
+  }
+}
+
 /** Selection persisted between surfaces, kept in the extension's own storage. */
 export interface Preferences {
   [key: string]: string | null | boolean;
@@ -58,20 +83,12 @@ function sanitize(raw: unknown): Preferences {
 }
 
 export async function loadPreferences(): Promise<Preferences> {
-  try {
-    return sanitize(await host.storage.get(PREFERENCES_KEY));
-  } catch {
-    return { ...DEFAULTS };
-  }
+  return read(PREFERENCES_KEY, (raw) => sanitize(raw));
 }
 
 export async function savePreferences(next: Partial<Preferences>): Promise<Preferences> {
   const merged = sanitize({ ...(await loadPreferences()), ...next });
-  try {
-    await host.storage.set(PREFERENCES_KEY, merged);
-  } catch {
-    // Storage is a convenience. A full namespace must not break the panel.
-  }
+  await write(PREFERENCES_KEY, merged);
   return merged;
 }
 
@@ -85,37 +102,25 @@ const SESSION_LINKS_KEY = "session-links";
 export type { SessionLink } from "./session-links";
 
 export async function loadSessionLinks(): Promise<Record<string, SessionLink>> {
-  try {
-    return sanitizeSessionLinks(await host.storage.get(SESSION_LINKS_KEY));
-  } catch {
-    return {};
-  }
+  return read(SESSION_LINKS_KEY, sanitizeSessionLinks);
 }
 
 export async function rememberSession(
   sessionId: string,
   link: { taskId: string; ticketId: string; title: string },
 ): Promise<void> {
-  try {
-    const links = await loadSessionLinks();
-    links[sessionId] = { ...link, at: Date.now(), posted: [] };
-    // The previous code pruned a copy taken before it deleted anything, so the
-    // oldest never actually fell off; prune the whole record and store that.
-    const kept = pruneSessionLinks(links);
-    await host.storage.set(SESSION_LINKS_KEY, JSON.parse(JSON.stringify(kept)));
-  } catch {
-    // Without the link the status comment is skipped; the session itself is fine.
-  }
+  const links = await loadSessionLinks();
+  links[sessionId] = { ...link, at: Date.now(), posted: [] };
+  // The previous code pruned a copy taken before it deleted anything, so the
+  // oldest never actually fell off; prune the whole record and store that.
+  const kept = pruneSessionLinks(links);
+  await write(SESSION_LINKS_KEY, kept);
 }
 
 export async function markSessionPosted(sessionId: string, phase: string): Promise<void> {
-  try {
-    const links = await loadSessionLinks();
-    const link = links[sessionId];
-    if (!link) return;
-    if (!link.posted.includes(phase)) link.posted.push(phase);
-    await host.storage.set(SESSION_LINKS_KEY, JSON.parse(JSON.stringify(links)));
-  } catch {
-    // A repeated comment is preferable to a crash.
-  }
+  const links = await loadSessionLinks();
+  const link = links[sessionId];
+  if (!link) return;
+  if (!link.posted.includes(phase)) link.posted.push(phase);
+  await write(SESSION_LINKS_KEY, links);
 }

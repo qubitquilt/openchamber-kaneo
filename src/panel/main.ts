@@ -13,22 +13,21 @@ import {
 
 import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, PRIORITY_RANK, type Priority } from "../shared/constants";
-import { clear, collapsibleMarkdown, el } from "../shared/dom";
+import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
+import { attachChip, reportFailure, type ChipTarget } from "../shared/attachments";
 import {
-  attachChip,
-  composeChip,
-  openInKaneo,
-  reportFailure,
-  startSessionWithChip,
-} from "../shared/attachments";
-import { columnLabel, dueLabel, priorityLabel, ticketIdOf } from "../shared/format";
-import {
-  loadPreferences,
-  rememberSession,
-  savePreferences,
-  type Preferences,
-} from "../shared/preferences";
+  detailActions,
+  detailComments,
+  detailDescription,
+  detailHead,
+  detailLabels,
+  detailMeta,
+  detailMove,
+  type CommentState,
+} from "../shared/detail";
+import { columnLabel, priorityLabel, ticketIdOf } from "../shared/format";
+import { loadPreferences, savePreferences, type Preferences } from "../shared/preferences";
 import { installStyles } from "../shared/styles";
 import { renderTaskRow } from "../shared/list-row";
 import { watchSessionLifecycle } from "../shared/lifecycle";
@@ -68,6 +67,10 @@ interface PanelState {
   labels: Label[];
   mine: MineRow[];
   mineTotal: number;
+  /** A task fetched for a chip click that is not on the selected board. */
+  extraTask: BoardTask | null;
+  /** Comments per task, loaded once when a detail opens. */
+  comments: Record<string, CommentState>;
   preferences: Preferences;
   search: string;
   tab: "board" | "mine";
@@ -84,6 +87,8 @@ const state: PanelState = {
   labels: [],
   mine: [],
   mineTotal: 0,
+  extraTask: null,
+  comments: {},
   preferences: {
     workspaceId: null,
     projectId: null,
@@ -103,6 +108,8 @@ const state: PanelState = {
 
 /** A newer render always wins, so a slow answer never overwrites a newer one. */
 let renderToken = 0;
+/** `onReady` repeats on theme and session changes; only the first one loads. */
+let booted = false;
 
 function describe(error: unknown): string {
   if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
@@ -304,7 +311,7 @@ function render(): void {
   root.append(resultsRoot);
   renderResults();
 
-  const detail = findTask(state.preferences.openTaskId);
+  const detail = detailTask();
   if (detail) root.append(renderDetail(detail));
 }
 
@@ -502,7 +509,7 @@ function renderBoard(scroller: HTMLElement): void {
         group.append(
           renderTaskRow({
             task,
-            ticketId: ticketIdOf(state.project?.slug ?? "", task.number),
+            ticketId: ticketFor(task),
             column,
             selected: task.id === state.preferences.openTaskId,
             onActivate: () => void openDetail(task.id),
@@ -567,17 +574,64 @@ function findTask(taskId: string | null): BoardTask | null {
   return null;
 }
 
+/** The task behind the open detail: a board task, else a fetched off-board one. */
+function detailTask(): BoardTask | null {
+  const id = state.preferences.openTaskId;
+  if (!id) return null;
+  return findTask(id) ?? (state.extraTask?.id === id ? state.extraTask : null);
+}
+
+/** The project a task belongs to, which may differ from the panel's selection. */
+function projectFor(task: BoardTask): ProjectListItem | null {
+  return state.context?.projects.find((project) => project.id === task.projectId) ?? state.project;
+}
+
 function ticketFor(task: BoardTask): string {
-  return ticketIdOf(state.project?.slug ?? "", task.number);
+  return ticketIdOf(projectFor(task)?.slug ?? "", task.number);
 }
 
 function columnNameFor(task: BoardTask): string {
   return (
-    state.board?.board.columns.find((column) => column.id === task.status)?.name ?? task.status
+    state.board?.board.columns.find((column) => column.id === task.status)?.name ??
+    columnLabel(task.status)
   );
 }
 
+function targetFor(task: BoardTask): ChipTarget {
+  return {
+    task,
+    ticketId: ticketFor(task),
+    workspaceId: state.context?.workspaceId ?? "",
+    projectName: projectFor(task)?.name,
+    columnName: columnNameFor(task),
+  };
+}
+
+function ensureComments(taskId: string): void {
+  if (state.comments[taskId]) return;
+  state.comments[taskId] = { loading: true, error: null };
+  void client
+    .listComments(taskId)
+    .then((comments) => {
+      state.comments[taskId] = { loading: false, error: null, items: comments };
+      render();
+    })
+    .catch((error: unknown) => {
+      state.comments[taskId] = { loading: false, error: describe(error) };
+      render();
+    });
+}
+
+/** A chip click can name a task outside the selected board; fetch it first. */
 async function openDetail(taskId: string): Promise<void> {
+  if (!findTask(taskId) && state.extraTask?.id !== taskId) {
+    try {
+      state.extraTask = await client.getTask(taskId);
+    } catch (error) {
+      await reportFailure("Open task", error);
+      return;
+    }
+  }
   state.preferences = await savePreferences({ openTaskId: taskId });
   render();
 }
@@ -587,153 +641,35 @@ async function closeDetail(): Promise<void> {
   render();
 }
 
+async function moveFromPanel(task: BoardTask, columnId: string): Promise<void> {
+  const column = state.board?.board.columns.find((entry) => entry.id === columnId);
+  await client.updateTaskStatus(task.id, columnId);
+  await host.toast({
+    kind: "success",
+    message: `${ticketFor(task)} moved to ${column?.name ?? columnId}.`,
+  });
+  // A move changes the project's statistics, so do not serve the cached list.
+  await invalidateBootstrapCache();
+  await load({ keepDetail: true });
+}
+
 function renderDetail(task: BoardTask): HTMLElement {
-  const ticketId = ticketFor(task);
-  const columnName = columnNameFor(task);
-  const target = {
-    task,
-    ticketId,
-    workspaceId: state.context?.workspaceId ?? "",
-    projectName: state.project?.name,
-    columnName,
-  };
-
+  ensureComments(task.id);
+  const target = targetFor(task);
   const sheet = el("div", { className: "sheet" });
-
-  sheet.append(
-    el(
-      "div",
-      { className: "sheet-head" },
-      el(
-        "div",
-        { style: "flex:1; min-width:0;" },
-        el("div", { className: "task-key" }, ticketId),
-        el("div", { className: "sheet-title" }, task.title),
-      ),
-      closeButton(() => void closeDetail()),
-    ),
-  );
-
-  const meta = el("dl", { className: "meta-grid" });
-  const rows: Array<[string, string]> = [["Status", columnName]];
-  if (task.priority !== "no-priority") rows.push(["Priority", priorityLabel(task.priority)]);
-  if (task.assigneeName) rows.push(["Assignee", task.assigneeName]);
-  const due = dueLabel(task.dueDate);
-  if (due) rows.push(["Due", due]);
-  if (task.subtaskCounts && task.subtaskCounts.total > 0) {
-    rows.push(["Subtasks", `${task.subtaskCounts.completed}/${task.subtaskCounts.total} done`]);
-  }
-  if (task.descriptionDeferred)
-    rows.push(["Description", "Too large to inline; open the task for the full text."]);
-  for (const [key, value] of rows) meta.append(el("dt", {}, key), el("dd", {}, value));
-  sheet.append(meta);
-
-  const labels = task.labels ?? [];
-  if (labels.length > 0) {
-    sheet.append(
-      el(
-        "div",
-        { className: "row", style: "flex-wrap:wrap;" },
-        ...labels.map((label) =>
-          el(
-            "span",
-            { className: "label-chip" },
-            el("span", { className: "label-dot", style: `background:${label.color}` }),
-            label.name,
-          ),
-        ),
-      ),
-    );
-  }
-
-  sheet.append(collapsibleMarkdown(task.description));
-
-  const actions = el("div", { className: "toolbar" });
-  button(actions, "Attach", async () => {
-    await attachChip(target);
-    await host.toast({ kind: "success", message: `${ticketId} attached to the chat.` });
+  sheet.append(detailHead(target, () => void closeDetail()));
+  sheet.append(detailMeta(target));
+  const labels = detailLabels(target);
+  if (labels) sheet.append(labels);
+  sheet.append(detailDescription(target));
+  const comments = detailComments(state.comments[task.id] ?? null);
+  if (comments) sheet.append(comments);
+  sheet.append(detailActions(target));
+  const move = detailMove(state.board?.board.columns ?? [], task.status, (columnId) => {
+    void moveFromPanel(task, columnId);
   });
-  button(actions, "New session", async () => {
-    const result = await startSessionWithChip(target);
-    if (result.sessionId === null) {
-      await host.toast({
-        kind: "error",
-        message: `No session was created${result.failure ? ` (${result.failure})` : ""}. Check the session list before retrying.`,
-        dismiss: true,
-      });
-      return;
-    }
-    await rememberSession(result.sessionId, {
-      taskId: task.id,
-      ticketId,
-      title: `${ticketId} ${task.title}`,
-    });
-    await host.toast({ kind: "success", message: `Session started for ${ticketId}.` });
-  });
-  button(actions, "Worktree session", async () => {
-    const result = await startSessionWithChip(target, { worktree: true });
-    if (result.sessionId === null) {
-      await host.toast({
-        kind: "error",
-        message: `No session was created${result.failure ? ` (${result.failure})` : ""}. The worktree ${result.branch ?? ""} was kept, so check the session list before retrying.`,
-        dismiss: true,
-      });
-      return;
-    }
-    await rememberSession(result.sessionId, {
-      taskId: task.id,
-      ticketId,
-      title: `${ticketId} ${task.title}`,
-    });
-    await host.toast({
-      kind: "success",
-      message: `Session started on ${result.branch} for ${ticketId}.`,
-    });
-  });
-  button(actions, "Send to chat", async () => {
-    await composeChip(target);
-  });
-  button(actions, "Open in Kaneo", async () => {
-    await openInKaneo(target);
-  });
-  sheet.append(actions);
-
-  const columns = (state.board?.board.columns ?? []).filter((column) => column.id !== task.status);
-  if (columns.length > 0) {
-    const moveHolder = el("div", { className: "toolbar" });
-    moveHolder.append(el("span", { className: "eyebrow" }, "Move to"));
-    for (const column of columns) {
-      button(moveHolder, column.name, async () => {
-        await client.updateTaskStatus(task.id, column.id);
-        await host.toast({ kind: "success", message: `${ticketId} moved to ${column.name}.` });
-        // A move changes the project's statistics, so do not serve the
-        // cached project list here.
-        await invalidateBootstrapCache();
-        await load({ keepDetail: true });
-      });
-    }
-    sheet.append(moveHolder);
-  }
-
+  if (move) sheet.append(move);
   return sheet;
-}
-
-function button(root: HTMLElement, label: string, run: () => Promise<void>): void {
-  const handle = mountButton(root, {
-    label,
-    variant: "secondary",
-    size: "sm",
-    onClick: () => {
-      handle.update({ loading: true });
-      void run()
-        .catch((error: unknown) => reportFailure(label, error))
-        .finally(() => handle.update({ loading: false }));
-    },
-  });
-}
-
-function closeButton(onClick: () => void): HTMLButtonElement {
-  return el("button", { className: "link-button", type: "button", onClick }, "Close");
 }
 
 /* ---------------------------------------------------------------- actions */
@@ -743,6 +679,7 @@ async function switchWorkspace(workspaceId: string): Promise<void> {
   state.preferences = await savePreferences({ workspaceId, projectId: null, openTaskId: null });
   state.board = null;
   state.mine = [];
+  state.extraTask = null;
   await load();
 }
 
@@ -751,6 +688,7 @@ async function switchProject(projectId: string): Promise<void> {
   state.preferences = await savePreferences({ projectId, openTaskId: null });
   state.project = state.context?.projects.find((entry) => entry.id === projectId) ?? null;
   state.board = null;
+  state.extraTask = null;
   await load();
 }
 
@@ -762,9 +700,9 @@ async function attachMineRow(taskId: string): Promise<void> {
     const assigned = state.mine.find((row) => row.id === taskId);
     await attachChip({
       task: detail,
-      ticketId: assigned?.ticketId ?? ticketIdOf(state.project?.slug ?? "", detail.number),
+      ticketId: assigned?.ticketId ?? ticketFor(detail),
       workspaceId: state.context?.workspaceId ?? detail.workspaceId ?? "",
-      projectName: assigned?.projectName ?? state.project?.name,
+      projectName: assigned?.projectName ?? projectFor(detail)?.name,
       columnName: assigned?.statusName ?? columnLabel(detail.status),
     });
     await host.toast({ kind: "success", message: "Task attached to the chat." });
@@ -793,14 +731,21 @@ host.onReady((ctx) => {
   state.connected = ctx.connection.connected;
   render();
   // Without a token every call answers 401, so the panel stays on the connect
-  // screen instead of flashing an error banner.
-  if (state.connected) void load();
+  // screen instead of flashing an error banner. Later `onReady` calls are
+  // theme or session updates, which must not refetch the whole board.
+  if (state.connected && !booted) {
+    booted = true;
+    void load();
+  }
 });
 
 host.onConnection((connection) => {
-  const changed = connection.connected !== state.connected;
+  const wasConnected = state.connected;
   state.connected = connection.connected;
-  if (changed) render();
+  if (wasConnected === connection.connected) return;
+  render();
+  // Reconnecting is the one time after the first load that the data is stale.
+  if (connection.connected) void load();
 });
 
 // Status comments on Kaneo for sessions this extension started. The

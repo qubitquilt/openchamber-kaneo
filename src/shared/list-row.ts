@@ -1,4 +1,5 @@
 import { el } from "./dom";
+import { labelChips, personChip } from "./chips";
 import { columnGlyphOf, dueLabel, priorityLabel, relativeTimeOf, type ColumnGlyph } from "./format";
 import { isOverdue } from "./format";
 import type { BoardColumn, BoardTask } from "./types";
@@ -35,36 +36,6 @@ function glyphNode(kind: ColumnGlyph): SVGSVGElement {
   svg.innerHTML = paths[kind];
   svg.classList.add("row-glyph");
   return svg;
-}
-
-function personChip(name: string): HTMLElement {
-  const initial = name.trim().slice(0, 1).toUpperCase() || "?";
-  return el(
-    "span",
-    { className: "person" },
-    el("span", { className: "person-avatar" }, initial),
-    el("span", { className: "person-name" }, name),
-  );
-}
-
-function labelChips(labels: Array<{ name: string; color: string }>, max = 2): HTMLElement | null {
-  if (labels.length === 0) return null;
-  const shown = labels.slice(0, max);
-  const chip = el("span", { className: "label-chips" });
-  for (const label of shown) {
-    chip.append(
-      el(
-        "span",
-        { className: "label-chip" },
-        el("span", { className: "label-dot", style: `background:${label.color}` }),
-        label.name,
-      ),
-    );
-  }
-  if (labels.length > shown.length) {
-    chip.append(el("span", { className: "label-more" }, `+${labels.length - shown.length}`));
-  }
-  return chip;
 }
 
 export interface TaskRowOptions {

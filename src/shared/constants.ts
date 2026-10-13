@@ -36,12 +36,3 @@ export const PRIORITY_RANK: Record<Priority, number> = {
   high: 3,
   urgent: 4,
 };
-
-/** `POST /task/{projectId}` and `PUT /task/{id}` both reject anything else. */
-export function isPriority(value: string): value is Priority {
-  return (PRIORITIES as readonly string[]).includes(value);
-}
-
-export function normalizePriority(value: string | null | undefined): Priority {
-  return isPriority(value ?? "") ? (value as Priority) : "no-priority";
-}

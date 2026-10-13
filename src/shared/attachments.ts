@@ -1,5 +1,6 @@
 import { PROVIDER_ID } from "./constants";
 import { host } from "./host";
+import { rememberSession } from "./preferences";
 import { branchForTicket, taskContext, taskToMarkdown, taskUrl } from "./format";
 import type { BoardTask } from "./types";
 
@@ -29,7 +30,7 @@ export interface ChipTarget {
    * only the status pass `columnLabel(status)`. It reaches the chip's model
    * context, so a slug here would read `in-progress` next to `In Progress`.
    */
-  columnName?: string;
+  columnName: string;
 }
 
 export function chipUrl(target: ChipTarget): string {
@@ -43,7 +44,7 @@ export function chipData(target: ChipTarget): TaskChipData {
     taskId: target.task.id,
     ticketId: target.ticketId,
     projectName: target.projectName ?? "",
-    columnName: target.columnName ?? "",
+    columnName: target.columnName,
   };
 }
 
@@ -57,7 +58,7 @@ export function chipFor(target: ChipTarget) {
     text: taskContext(target.task, {
       ticketId: target.ticketId,
       ...(target.projectName ? { projectName: target.projectName } : {}),
-      ...(target.columnName ? { columnName: target.columnName } : {}),
+      columnName: target.columnName,
       url: chipUrl(target),
     }),
     author: target.task.assigneeName ?? undefined,
@@ -105,6 +106,49 @@ export async function startSessionWithChip(
     sent: result.sent,
     branch: result.worktree?.branch ?? requestedBranch,
   };
+}
+
+/** Attach the task and confirm it, the way every detail surface does. */
+export async function attachTask(target: ChipTarget): Promise<void> {
+  await attachChip(target);
+  await host.toast({ kind: "success", message: `${target.ticketId} attached to the chat.` });
+}
+
+/**
+ * Start a session for the task, remember it for status comments, and report the
+ * outcome. The panel, the picker and the board all call this, so a new session
+ * reads the same everywhere and the worktree wording stays in one place.
+ */
+export async function startSessionForTask(
+  target: ChipTarget,
+  options: { worktree?: boolean; projectId?: string } = {},
+): Promise<boolean> {
+  const result = await startSessionWithChip(target, options);
+
+  if (result.sessionId === null) {
+    const kept = result.branch ? ` The worktree ${result.branch} was kept.` : "";
+    const reason = result.failure ? ` (${result.failure})` : "";
+    await host.toast({
+      kind: "error",
+      message: `No session was created${reason}.${kept} Check the session list before retrying.`,
+      dismiss: true,
+    });
+    return false;
+  }
+
+  await rememberSession(result.sessionId, {
+    taskId: target.task.id,
+    ticketId: target.ticketId,
+    title: `${target.ticketId} ${target.task.title}`,
+  });
+  await host.toast({
+    kind: "success",
+    message:
+      options.worktree && result.branch
+        ? `Session started on ${result.branch} for ${target.ticketId}.`
+        : `Session started for ${target.ticketId}.`,
+  });
+  return true;
 }
 
 /** Put the task in the chat box without sending it. */

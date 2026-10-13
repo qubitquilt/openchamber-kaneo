@@ -21,7 +21,7 @@ import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
-import { attachChip, startSessionWithChip } from "../shared/attachments";
+import { attachChip, startSessionForTask } from "../shared/attachments";
 import { columnLabel, firstLine, priorityLabel, ticketIdOf } from "../shared/format";
 import { loadPreferences } from "../shared/preferences";
 import { installStyles } from "../shared/styles";
@@ -59,6 +59,7 @@ type Draft = {
 
 interface State {
   ready: HostReadyContext | null;
+  connected: boolean;
   context: WorkspaceContext | null;
   project: ProjectListItem | null;
   /** Every task in the selected project, grouped by column name. */
@@ -78,6 +79,7 @@ interface State {
 
 const state: State = {
   ready: null,
+  connected: false,
   context: null,
   project: null,
   boardTasks: [],
@@ -94,6 +96,10 @@ const state: State = {
 
 let renderToken = 0;
 let renderSearch = 0;
+/** `onReady` repeats on theme and session changes; only the first one seeds. */
+let booted = false;
+/** The board is loaded on the first connect and after a reconnect. */
+let loaded = false;
 
 function describe(error: unknown): string {
   if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
@@ -159,11 +165,11 @@ async function searchWorkspace(): Promise<void> {
   const query = state.search.trim();
   if (!workspaceId || query.length < 2) {
     state.results = null;
-    render();
+    renderResults();
     return;
   }
   state.loading = true;
-  render();
+  renderResults();
   try {
     const found = await client.search(workspaceId, query, {
       ...(state.project ? { projectId: state.project.id } : {}),
@@ -183,7 +189,7 @@ async function searchWorkspace(): Promise<void> {
       misses > 0
         ? `${misses} match${misses === 1 ? " is" : "es are"} outside the loaded board. Open the Kaneo web app to reach them.`
         : null;
-    render();
+    renderResults();
   } catch (error) {
     if (token !== renderSearch) return;
     state.loading = false;
@@ -213,23 +219,14 @@ async function attach(task: BoardTask): Promise<void> {
 }
 
 async function attachAndStart(task: BoardTask): Promise<void> {
-  const result = await startSessionWithChip({
+  const started = await startSessionForTask({
     task,
     ticketId: ticketFor(task),
     workspaceId: state.context?.workspaceId ?? "",
     projectName: state.project?.name,
     columnName: state.columnNames[task.status] ?? columnLabel(task.status),
   });
-  if (result.sessionId === null) {
-    await host.toast({
-      kind: "error",
-      message: `No session was created${result.failure ? ` (${result.failure})` : ""}. The worktree was kept.`,
-      dismiss: true,
-    });
-    return;
-  }
-  await host.toast({ kind: "success", message: `Session started for ${ticketFor(task)}.` });
-  await host.close();
+  if (started) await host.close();
 }
 
 async function createTask(): Promise<void> {
@@ -278,7 +275,7 @@ function render(): void {
     return;
   }
 
-  if (!state.ready.connection.connected) {
+  if (!state.connected) {
     mountEmpty(root, {
       title: "Kaneo is not connected",
       body: "Add an API token in Settings → Integrations → Kaneo.",
@@ -506,20 +503,42 @@ host.onReady((ctx) => {
   document.body.dataset.theme = ctx.theme.mode;
   document.body.dataset.surface = ctx.surface;
   state.ready = ctx;
+  state.connected = ctx.connection.connected;
 
-  if (isGuestMessageItem(ctx.item) || isGuestSessionItem(ctx.item)) {
-    state.source = ctx.item;
-    state.draft = draftFromSource(ctx.item);
-    state.tab = "create";
-  } else {
-    // A chip click reopens this dialog for the task already attached.
-    state.tab = "board";
+  // Seed the tab and the draft from the opening item only once; a later
+  // `onReady` is a theme or session update and must not reset the user's tab.
+  if (!booted) {
+    booted = true;
+    if (isGuestMessageItem(ctx.item) || isGuestSessionItem(ctx.item)) {
+      state.source = ctx.item;
+      state.draft = draftFromSource(ctx.item);
+      state.tab = "create";
+    } else {
+      // A chip click reopens this dialog for the task already attached.
+      state.tab = "board";
+    }
   }
 
   render();
   // Without a token every call answers 401, so the picker stays on the connect
   // screen instead of flashing an error banner.
-  if (state.ready.connection.connected) void load();
+  if (state.connected && !loaded) {
+    loaded = true;
+    void load();
+  }
+});
+
+host.onConnection((connection) => {
+  const wasConnected = state.connected;
+  state.connected = connection.connected;
+  if (wasConnected === connection.connected) return;
+  render();
+  // A transition to connected is the one time after the first load the data
+  // may be stale; `loaded` keeps the initial `onConnection` from doubling it.
+  if (connection.connected) {
+    loaded = true;
+    void load();
+  }
 });
 
 host.onItem((item) => {

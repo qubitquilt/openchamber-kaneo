@@ -83,15 +83,30 @@ export interface SessionLink {
   ticketId: string;
   /** Chip title captured at start, since lifecycle events carry no title. */
   title: string;
+  /** When the session started, used to drop the oldest links. */
+  at: number;
   /** Phases already posted, so two open surfaces do not comment twice. */
   posted: string[];
 }
 
 export async function loadSessionLinks(): Promise<Record<string, SessionLink>> {
   try {
-    const raw = (await host.storage.get(SESSION_LINKS_KEY)) as
-      Record<string, SessionLink> | undefined;
-    return raw && typeof raw === "object" ? raw : {};
+    const raw = (await host.storage.get(SESSION_LINKS_KEY)) as unknown;
+    if (!raw || typeof raw !== "object") return {};
+    const links: Record<string, SessionLink> = {};
+    for (const [id, value] of Object.entries(raw as Record<string, SessionLink>)) {
+      if (!value || typeof value !== "object" || typeof value.taskId !== "string") continue;
+      links[id] = {
+        taskId: value.taskId,
+        ticketId: typeof value.ticketId === "string" ? value.ticketId : "",
+        title: typeof value.title === "string" ? value.title : "",
+        at: typeof value.at === "number" ? value.at : 0,
+        posted: Array.isArray(value.posted)
+          ? value.posted.filter((phase) => typeof phase === "string")
+          : [],
+      };
+    }
+    return links;
   } catch {
     return {};
   }
@@ -103,13 +118,16 @@ export async function rememberSession(
 ): Promise<void> {
   try {
     const links = await loadSessionLinks();
-    links[sessionId] = { ...link, posted: [] };
-    const plain = JSON.parse(JSON.stringify(links));
-    const ids = Object.keys(links);
-    for (const id of ids.sort().slice(0, Math.max(0, ids.length - SESSION_LINKS_MAX))) {
-      delete links[id];
-    }
-    await host.storage.set(SESSION_LINKS_KEY, plain);
+    links[sessionId] = { ...link, at: Date.now(), posted: [] };
+    // Keep the newest links; the previous code pruned a copy taken before it
+    // deleted anything, so the oldest never actually fell off.
+    const newest = Object.entries(links)
+      .sort((a, b) => b[1].at - a[1].at)
+      .slice(0, SESSION_LINKS_MAX);
+    await host.storage.set(
+      SESSION_LINKS_KEY,
+      JSON.parse(JSON.stringify(Object.fromEntries(newest))),
+    );
   } catch {
     // Without the link the status comment is skipped; the session itself is fine.
   }

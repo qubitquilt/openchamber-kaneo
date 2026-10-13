@@ -5,13 +5,17 @@ Kaneo tasks inside OpenChamber: a rail panel that lists a board, an attach picke
 
 ## What you get
 
-| Surface                     | How you reach it                            | What it does                                                                                                       |
-| --------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Rail panel                  | the Kaneo icon on the right-hand rail       | board by column, assigned tasks, filters, a detail sheet with attach, start-session, send-to-chat and move actions |
-| Attach picker               | `+` next to the chat box                    | search the workspace, attach a task as a chip, or create one                                                       |
-| `Kaneo Board` page          | Extension pages menu above the session list | every column side by side, drag and drop between columns, detail overlay                                           |
-| `/kaneo GEN-4`              | the chat box                                | attaches that ticket as a chip without opening anything                                                            |
-| Message and session actions | the `⋯` menu on a message or a session      | opens the picker with a title drafted from the text                                                                |
+| Surface                     | How you reach it                            | What it does                                                                                                   |
+| --------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Rail panel                  | the Kaneo icon on the right-hand rail       | board by column, assigned tasks, filters, a detail sheet with comments, attach, start-session and move actions |
+| Attach picker               | `+` next to the chat box                    | search the workspace, attach a task as a chip, start a session, or create one                                  |
+| `Kaneo Board` page          | Extension pages menu above the session list | every column side by side, drag and drop between columns, detail overlay with comments                         |
+| `/kaneo GEN-4`              | the chat box                                | attaches that ticket as a chip without opening anything                                                        |
+| Message and session actions | the `⋯` menu on a message or a session      | opens the picker with a title drafted from the text                                                            |
+
+Every detail surface reads the same: status and priority, assignee, due date, labels, the description and the comment
+timeline, then one row of actions. A session started from any surface is remembered, so the task gets started,
+completed and failed status comments once you set an OpenChamber web URL in the integration settings.
 
 ## Install
 
@@ -100,3 +104,8 @@ the panel.
   four surfaces. A stale project choice falls back to the first project in the workspace.
 - The `workspace` field on the integration card seeds the first workspace on a fresh install. Leave it
   blank to take the first one the token can see.
+- Status comments are English and read by the whole team, so they only post when you set an OpenChamber
+  web URL. Without it the extension leaves the task untouched apart from the chip you attach.
+- The newest 50 task-linked sessions are remembered for those comments; older links fall off. A session
+  that outlives every open Kaneo surface posts no further comments, because the watcher lives in the
+  surface, unlike Linear's server-side event hub.

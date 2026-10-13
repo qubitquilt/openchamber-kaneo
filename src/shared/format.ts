@@ -1,5 +1,5 @@
 import { WEB_ORIGIN } from "./constants";
-import type { BoardTask, AssignedTask, Priority } from "./types";
+import type { BoardTask, Priority } from "./types";
 
 const DAY_MS = 86_400_000;
 
@@ -93,14 +93,6 @@ export function taskSummary(task: BoardTask): string {
   if (subtasks && subtasks.total > 0) {
     parts.push(`${subtasks.completed}/${subtasks.total} subtasks`);
   }
-  return parts.join(" · ");
-}
-
-export function assignedSummary(task: AssignedTask): string {
-  const parts: string[] = [task.projectName];
-  if (task.statusName) parts.push(task.statusName);
-  const due = dueLabel(task.dueDate);
-  if (due) parts.push(due);
   return parts.join(" · ");
 }
 

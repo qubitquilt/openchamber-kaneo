@@ -13,39 +13,31 @@ import {
 
 import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, PRIORITY_RANK, type Priority } from "../shared/constants";
-import { clear, collapsibleMarkdown, el } from "../shared/dom";
+import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
+import { reportFailure, type ChipTarget } from "../shared/attachments";
+import { labelChip } from "../shared/chips";
 import {
-  attachChip,
-  composeChip,
-  openInKaneo,
-  reportFailure,
-  startSessionWithChip,
-} from "../shared/attachments";
-import {
-  loadPreferences,
-  rememberSession,
-  savePreferences,
-  type Preferences,
-} from "../shared/preferences";
+  detailActions,
+  detailComments,
+  detailDescription,
+  detailHead,
+  detailLabels,
+  detailMeta,
+  detailMetaLine,
+  detailMove,
+  type CommentState,
+} from "../shared/detail";
+import { loadPreferences, savePreferences, type Preferences } from "../shared/preferences";
 import { watchSessionLifecycle } from "../shared/lifecycle";
 import { renderTaskRow } from "../shared/list-row";
-import {
-  columnLabel,
-  dueLabel,
-  isOverdue,
-  priorityLabel,
-  relativeTimeOf,
-  ticketIdOf,
-} from "../shared/format";
-import { renderMarkdown } from "../shared/dom";
+import { columnLabel, dueLabel, isOverdue, priorityLabel, ticketIdOf } from "../shared/format";
 import { installStyles } from "../shared/styles";
 import { kaneoWordmark } from "../shared/logo";
 import type {
   Board,
   BoardColumn,
   BoardTask,
-  Comment,
   Label,
   ProjectListItem,
   TaskDetail,
@@ -82,19 +74,13 @@ interface BoardState {
   detailId: string | null;
   loading: boolean;
   error: string | null;
-  /** Task details fetched for the Mine tab preview. */
-  mineDetail: { id: string; task: TaskDetail } | null;
+  /** The Mine tab's selected row, with the task detail fetched for it. */
+  mineDetail: { entry: MineEntry; task: TaskDetail } | null;
   /** Comments per task, loaded once when a preview opens. */
-  comments: Record<string, CommentEntry>;
+  comments: Record<string, CommentState>;
   listWidth: number | null;
   /** The Mine tab's rows, from listAssignedTasks. */
   mineEntries: MineEntry[];
-}
-
-interface CommentEntry {
-  loading: boolean;
-  error: string | null;
-  items?: Comment[];
 }
 
 const state: BoardState = {
@@ -127,7 +113,8 @@ const state: BoardState = {
 };
 
 let renderToken = 0;
-let searchHandle: ReturnType<typeof mountSearchField> | null = null;
+/** `onReady` repeats on theme and session changes; only the first one loads. */
+let booted = false;
 
 function describe(error: unknown): string {
   if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
@@ -141,6 +128,16 @@ function ticketFor(task: BoardTask): string {
 
 function columnOf(task: BoardTask): BoardColumn | undefined {
   return state.board?.columns.find((column) => column.id === task.status);
+}
+
+function targetFor(task: BoardTask): ChipTarget {
+  return {
+    task,
+    ticketId: ticketFor(task),
+    workspaceId: state.context?.workspaceId ?? "",
+    projectName: state.project?.name,
+    columnName: columnOf(task)?.name ?? columnLabel(task.status),
+  };
 }
 
 /** Board, priority, label and text filters, applied the same way everywhere. */
@@ -282,7 +279,6 @@ let resultsRoot: HTMLElement | null = null;
 function render(): void {
   if (!root) return;
   clear(root);
-  searchHandle = null;
   resultsRoot = null;
 
   if (!state.ready) {
@@ -412,14 +408,15 @@ function renderBar(): HTMLElement {
 
   const searchHolder = el("div", { style: "flex:1; min-width:180px;" });
   bar.append(searchHolder);
-  searchHandle = mountSearchField(searchHolder, {
+  mountSearchField(searchHolder, {
     value: state.search,
     label: "Filter tasks",
     placeholder: "Filter by title, ticket or description",
     onChange: (value) => {
       state.search = value;
-      render();
-      searchHandle?.update({ value });
+      // Repaint the results only: rebuilding the toolbar would drop focus from
+      // the search input after the first keystroke.
+      renderResults();
     },
   });
 
@@ -574,7 +571,7 @@ function renderListSplit(): HTMLElement {
 
   const preview = el("div", { className: "split-preview" });
   const detail = findTask(state.detailId);
-  if (detail) preview.append(renderPreview(detail));
+  if (detail) preview.append(renderPreview(targetFor(detail)));
   else {
     const holder = el("div", { style: "flex:1; display:flex; align-items:center;" });
     preview.append(holder);
@@ -640,7 +637,7 @@ function renderMineSplit(): HTMLElement {
           isFinal: false,
           name: entry.statusName ?? "",
         },
-        selected: state.mineDetail?.id === entry.id,
+        selected: state.mineDetail?.entry.id === entry.id,
         onActivate: () => void openMineEntry(entry),
       });
       list.append(row);
@@ -652,7 +649,7 @@ function renderMineSplit(): HTMLElement {
 
   const preview = el("div", { className: "split-preview" });
   if (state.mineDetail) {
-    preview.append(renderPreview(state.mineDetail.task));
+    preview.append(renderPreview(mineTarget(state.mineDetail)));
   } else {
     const holder = el("div", { style: "flex:1; display:flex; align-items:center;" });
     preview.append(holder);
@@ -697,17 +694,28 @@ function startListResize(event: PointerEvent): void {
 }
 
 async function openMineEntry(entry: MineEntry): Promise<void> {
-  state.mineDetail = { id: entry.id, task: stubFromEntry(entry) };
+  state.mineDetail = { entry, task: stubFromEntry(entry) };
   render();
   try {
     const detail = await client.getTask(entry.id);
-    if (state.mineDetail?.id === entry.id) {
-      state.mineDetail = { id: entry.id, task: detail };
+    if (state.mineDetail?.entry.id === entry.id) {
+      state.mineDetail = { entry, task: detail };
       render();
     }
   } catch (error) {
     await reportFailure("Open task", error);
   }
+}
+
+/** An assigned task lives in its own project, so name that project, not the board's. */
+function mineTarget(detail: { entry: MineEntry; task: TaskDetail }): ChipTarget {
+  return {
+    task: detail.task,
+    ticketId: detail.entry.ticketId,
+    workspaceId: state.context?.workspaceId ?? "",
+    projectName: detail.entry.projectName,
+    columnName: detail.entry.statusName ?? columnLabel(detail.task.status),
+  };
 }
 
 function stubFromEntry(entry: MineEntry): TaskDetail {
@@ -745,34 +753,30 @@ function ensureComments(taskId: string): void {
     });
 }
 
-function renderPreview(task: BoardTask): HTMLElement {
+function renderPreview(target: ChipTarget): HTMLElement {
+  const { task } = target;
   ensureComments(task.id);
-  const fragment = document.createDocumentFragment();
   const wrap = el("div", { style: "display:flex; flex-direction:column; gap:8px;" });
 
-  const columnName = columnById(task.status)?.name ?? columnLabel(task.status);
-  const ticketId = ticketFor(task);
-  const target = {
-    task,
-    ticketId,
-    workspaceId: state.context?.workspaceId ?? "",
-    projectName: state.project?.name,
-    columnName,
-  };
-
   const head = el("div", { className: "preview-head" });
-  const stateHolder = el("div");
-  head.append(stateHolder);
-  mountMenu(stateHolder, {
-    label: columnName,
-    items: (state.board?.columns ?? [])
-      .filter((column) => column.id !== task.status)
-      .map((column) => ({ id: column.id, label: column.name })),
-    onSelect: (id) => {
-      void moveTask(task.id, id);
-    },
-  });
-  head.append(el("span", { className: "task-key" }, ticketId));
+  // A task from the Mine tab lives in another project, so its status cannot be
+  // moved with this board's columns; show it as a plain pill instead.
+  if (columnOf(task)) {
+    const stateHolder = el("div");
+    head.append(stateHolder);
+    mountMenu(stateHolder, {
+      label: target.columnName,
+      items: (state.board?.columns ?? [])
+        .filter((column) => column.id !== task.status)
+        .map((column) => ({ id: column.id, label: column.name })),
+      onSelect: (id) => {
+        void moveTask(task.id, id);
+      },
+    });
+  } else {
+    head.append(el("span", { className: "state-pill" }, target.columnName));
+  }
+  head.append(el("span", { className: "task-key" }, target.ticketId));
   const closeHolder = el("div", { style: "margin-left:auto;" });
   head.append(closeHolder);
   mountButton(closeHolder, {
@@ -787,136 +791,15 @@ function renderPreview(task: BoardTask): HTMLElement {
   });
   wrap.append(head, el("div", { className: "preview-title" }, task.title));
 
-  const meta = el("div", { className: "row-meta" });
-  if (task.assigneeName) meta.append(el("span", {}, task.assigneeName));
-  if (task.priority !== "no-priority") meta.append(el("span", {}, priorityLabel(task.priority)));
-  const due = dueLabel(task.dueDate);
-  if (due) meta.append(el("span", { className: isOverdue(task.dueDate) ? "overdue" : "" }, due));
-  const age = relativeTimeOf(task.createdAt);
-  if (age) meta.append(el("span", {}, age));
-  const subtasks = task.subtaskCounts;
-  if (subtasks && subtasks.total > 0) {
-    meta.append(
-      el("span", { className: "tabular" }, `${subtasks.completed}/${subtasks.total} subtasks`),
-    );
-  }
+  const meta = detailMetaLine(target);
   if (meta.childElementCount > 0) wrap.append(meta);
-
-  const labels = task.labels ?? [];
-  if (labels.length > 0) {
-    const chips = el("div", { className: "label-chips" });
-    for (const label of labels) {
-      chips.append(
-        el(
-          "span",
-          { className: "label-chip" },
-          el("span", { className: "label-dot", style: `background:${label.color}` }),
-          label.name,
-        ),
-      );
-    }
-    wrap.append(chips);
-  }
-
-  wrap.append(collapsibleMarkdown(task.description, 1200));
-
-  const comments = state.comments[task.id];
-  const items = comments?.items;
-  if (comments?.error) {
-    wrap.append(el("div", { className: "muted" }, `Comments unavailable: ${comments.error}`));
-  } else if (comments?.loading) {
-    wrap.append(el("div", { className: "muted" }, "Loading comments…"));
-  } else if (items && items.length > 0) {
-    const list = el("div", { className: "comments" });
-    list.append(el("span", { className: "eyebrow" }, `Comments (${items.length})`));
-    for (const comment of items) {
-      const when = relativeTimeOf(comment.createdAt);
-      const node = el("div", { className: "comment" });
-      node.append(
-        el(
-          "div",
-          { className: "comment-head" },
-          el(
-            "span",
-            { className: "person-avatar" },
-            (comment.user?.name ?? "?").slice(0, 1).toUpperCase(),
-          ),
-          el("span", {}, comment.user?.name ?? "Unknown"),
-          when ? el("span", {}, when) : null,
-        ),
-        el("div", { className: "comment-body" }, renderMarkdown(comment.content)),
-      );
-      list.append(node);
-    }
-    wrap.append(list);
-  }
-
-  const actions = el("div", { className: "toolbar" });
-  previewAction(actions, "Attach", async () => {
-    await attachChip(target);
-    await host.toast({ kind: "success", message: `${ticketId} attached to the chat.` });
-  });
-  previewAction(actions, "New session", async () => {
-    const result = await startSessionWithChip(target);
-    if (result.sessionId === null) {
-      await host.toast({
-        kind: "error",
-        message: `No session was created${result.failure ? ` (${result.failure})` : ""}. Check the session list before retrying.`,
-        dismiss: true,
-      });
-      return;
-    }
-    await rememberSession(result.sessionId, {
-      taskId: task.id,
-      ticketId,
-      title: `${ticketId} ${task.title}`,
-    });
-    await host.toast({ kind: "success", message: `Session started for ${ticketId}.` });
-  });
-  previewAction(actions, "Worktree session", async () => {
-    const result = await startSessionWithChip(target, { worktree: true });
-    if (result.sessionId === null) {
-      await host.toast({
-        kind: "error",
-        message: `No session was created${result.failure ? ` (${result.failure})` : ""}. The worktree ${result.branch ?? ""} was kept, so check the session list before retrying.`,
-        dismiss: true,
-      });
-      return;
-    }
-    await rememberSession(result.sessionId, {
-      taskId: task.id,
-      ticketId,
-      title: `${ticketId} ${task.title}`,
-    });
-    await host.toast({
-      kind: "success",
-      message: `Session started on ${result.branch} for ${ticketId}.`,
-    });
-  });
-  previewAction(actions, "Send to chat", async () => {
-    await composeChip(target);
-  });
-  previewAction(actions, "Open in Kaneo", async () => {
-    await openInKaneo(target);
-  });
-  wrap.append(actions);
-
-  fragment.append(wrap);
-  return fragment as unknown as HTMLElement;
-}
-
-function previewAction(root: HTMLElement, label: string, run: () => Promise<void>): void {
-  const handle = mountButton(root, {
-    label,
-    variant: "secondary",
-    size: "sm",
-    onClick: () => {
-      handle.update({ loading: true });
-      void run()
-        .catch((error: unknown) => reportFailure(label, error))
-        .finally(() => handle.update({ loading: false }));
-    },
-  });
+  const labels = detailLabels(target);
+  if (labels) wrap.append(labels);
+  wrap.append(detailDescription(target, 1200));
+  const comments = detailComments(state.comments[task.id] ?? null);
+  if (comments) wrap.append(comments);
+  wrap.append(detailActions(target));
+  return wrap;
 }
 
 function renderColumn(column: BoardColumn): HTMLElement {
@@ -980,23 +863,14 @@ function renderCard(task: BoardTask): HTMLElement {
   if (subtasks && subtasks.total > 0) {
     meta.append(el("span", {}, `${subtasks.completed}/${subtasks.total}`));
   }
-  for (const label of task.labels ?? []) {
-    meta.append(
-      el(
-        "span",
-        { className: "label-chip" },
-        el("span", { className: "label-dot", style: `background:${label.color}` }),
-        label.name,
-      ),
-    );
-  }
+  for (const label of task.labels ?? []) meta.append(labelChip(label));
 
   // Status pill: pick a column to move the task there.
   const statusPillHolder = el("span", { className: "status-pill-holder" });
   meta.append(statusPillHolder);
   const columns = state.board?.columns ?? [];
   const columnName = columns.find((column) => column.id === task.status)?.name ?? task.status;
-  const statusMenu = mountMenu(statusPillHolder, {
+  mountMenu(statusPillHolder, {
     label: columnName,
     size: "xs",
     items: columns
@@ -1006,17 +880,6 @@ function renderCard(task: BoardTask): HTMLElement {
       void moveTask(task.id, id);
     },
   });
-  statusMenu.update({ label: columnName });
-  for (const label of task.labels ?? []) {
-    meta.append(
-      el(
-        "span",
-        { className: "label-chip" },
-        el("span", { className: "label-dot", style: `background:${label.color}` }),
-        label.name,
-      ),
-    );
-  }
   card.append(meta);
 
   card.addEventListener("dragstart", (event) => {
@@ -1042,15 +905,8 @@ function renderCard(task: BoardTask): HTMLElement {
 }
 
 function renderDetail(task: BoardTask): HTMLElement {
-  const ticketId = ticketFor(task);
-  const columnName = columnOf(task)?.name ?? columnLabel(task.status);
-  const target = {
-    task,
-    ticketId,
-    workspaceId: state.context?.workspaceId ?? "",
-    projectName: state.project?.name,
-    columnName,
-  };
+  ensureComments(task.id);
+  const target = targetFor(task);
 
   const backdrop = el("div", { className: "backdrop" });
   backdrop.addEventListener("click", (event) => {
@@ -1058,97 +914,18 @@ function renderDetail(task: BoardTask): HTMLElement {
   });
 
   const card = el("div", { className: "backdrop-card" });
-  card.append(
-    el(
-      "div",
-      { className: "sheet-head" },
-      el(
-        "div",
-        { style: "flex:1; min-width:0;" },
-        el("div", { className: "task-key" }, ticketId),
-        el("div", { className: "sheet-title" }, task.title),
-      ),
-      el("button", { className: "link-button", type: "button", onClick: close }, "Close"),
-    ),
-  );
-
-  const meta = el("dl", { className: "meta-grid" });
-  const rows: Array<[string, string]> = [["Status", columnName]];
-  if (task.priority !== "no-priority") rows.push(["Priority", priorityLabel(task.priority)]);
-  if (task.assigneeName) rows.push(["Assignee", task.assigneeName]);
-  const due = dueLabel(task.dueDate);
-  if (due) rows.push(["Due", due]);
-  const subtasks = task.subtaskCounts;
-  if (subtasks && subtasks.total > 0) {
-    rows.push(["Subtasks", `${subtasks.completed}/${subtasks.total} done`]);
-  }
-  if (task.descriptionDeferred) rows.push(["Description", "Too large to inline here."]);
-  for (const [key, value] of rows) meta.append(el("dt", {}, key), el("dd", {}, value));
-  card.append(meta);
-
-  card.append(collapsibleMarkdown(task.description, 1200));
-
-  const actions = el("div", { className: "toolbar" });
-  action(actions, "Attach", async () => {
-    await attachChip(target);
-    await host.toast({ kind: "success", message: `${ticketId} attached to the chat.` });
+  card.append(detailHead(target, close));
+  card.append(detailMeta(target));
+  const labels = detailLabels(target);
+  if (labels) card.append(labels);
+  card.append(detailDescription(target, 1200));
+  const comments = detailComments(state.comments[task.id] ?? null);
+  if (comments) card.append(comments);
+  card.append(detailActions(target));
+  const move = detailMove(state.board?.columns ?? [], task.status, (columnId) => {
+    void moveTask(task.id, columnId);
   });
-  action(actions, "New session", async () => {
-    const result = await startSessionWithChip(target);
-    if (result.sessionId === null) {
-      await host.toast({
-        kind: "error",
-        message: `No session was created${result.failure ? ` (${result.failure})` : ""}. Check the session list before retrying.`,
-        dismiss: true,
-      });
-      return;
-    }
-    await rememberSession(result.sessionId, {
-      taskId: task.id,
-      ticketId,
-      title: `${ticketId} ${task.title}`,
-    });
-    await host.toast({ kind: "success", message: `Session started for ${ticketId}.` });
-  });
-  action(actions, "Worktree session", async () => {
-    const result = await startSessionWithChip(target, { worktree: true });
-    if (result.sessionId === null) {
-      await host.toast({
-        kind: "error",
-        message: `No session was created${result.failure ? ` (${result.failure})` : ""}. The worktree ${result.branch ?? ""} was kept, so check the session list before retrying.`,
-        dismiss: true,
-      });
-      return;
-    }
-    await rememberSession(result.sessionId, {
-      taskId: task.id,
-      ticketId,
-      title: `${ticketId} ${task.title}`,
-    });
-    await host.toast({
-      kind: "success",
-      message: `Session started on ${result.branch} for ${ticketId}.`,
-    });
-  });
-  action(actions, "Send to chat", async () => {
-    await composeChip(target);
-  });
-  action(actions, "Open in Kaneo", async () => {
-    await openInKaneo(target);
-  });
-  card.append(actions);
-
-  const columns = (state.board?.columns ?? []).filter((column) => column.id !== task.status);
-  if (columns.length > 0) {
-    const moveHolder = el("div", { className: "toolbar" });
-    moveHolder.append(el("span", { className: "eyebrow" }, "Move to"));
-    for (const column of columns) {
-      action(moveHolder, column.name, async () => {
-        await moveTask(task.id, column.id);
-      });
-    }
-    card.append(moveHolder);
-  }
+  if (move) card.append(move);
 
   backdrop.append(card);
   return backdrop;
@@ -1157,20 +934,6 @@ function renderDetail(task: BoardTask): HTMLElement {
 function close(): void {
   state.detailId = null;
   render();
-}
-
-function action(root: HTMLElement, label: string, run: () => Promise<void>): void {
-  const handle = mountButton(root, {
-    label,
-    variant: "secondary",
-    size: "sm",
-    onClick: () => {
-      handle.update({ loading: true });
-      void run()
-        .catch((error: unknown) => reportFailure(label, error))
-        .finally(() => handle.update({ loading: false }));
-    },
-  });
 }
 
 /* ------------------------------------------------------------------- host */
@@ -1184,14 +947,20 @@ host.onReady((ctx) => {
   state.connected = ctx.connection.connected;
   render();
   // Without a token every call answers 401, so the board stays on the connect
-  // screen instead of flashing an error banner.
-  if (state.connected) void load();
+  // screen instead of flashing an error banner. Later `onReady` calls are
+  // theme or session updates, which must not refetch the board.
+  if (state.connected && !booted) {
+    booted = true;
+    void load();
+  }
 });
 
 host.onConnection((connection) => {
-  const changed = connection.connected !== state.connected;
+  const wasConnected = state.connected;
   state.connected = connection.connected;
-  if (changed) render();
+  if (wasConnected === connection.connected) return;
+  render();
+  if (connection.connected) void load();
 });
 
 // Status comments on Kaneo for sessions this extension started.

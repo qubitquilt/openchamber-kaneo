@@ -1,0 +1,129 @@
+import { PROVIDER_ID } from "./constants";
+import { host } from "./host";
+import { branchForTicket, taskContext, taskToMarkdown, taskUrl } from "./format";
+import type { BoardTask } from "./types";
+
+/**
+ * The JSON stored with a chip. It comes back as `ready.item.data` when the user
+ * clicks the chip, so the panel can reopen the task without another lookup.
+ * Every value is a plain string, which is what keeps the object assignable to
+ * the host's `JsonValue`; absent fields are stored as an empty string.
+ */
+export interface TaskChipData {
+  [key: string]: string;
+  workspaceId: string;
+  projectId: string;
+  taskId: string;
+  ticketId: string;
+  projectName: string;
+  columnName: string;
+}
+
+export interface ChipTarget {
+  task: BoardTask;
+  ticketId: string;
+  workspaceId: string;
+  projectName?: string;
+  columnName?: string;
+}
+
+export function chipUrl(target: ChipTarget): string {
+  return taskUrl(target.workspaceId, target.task.projectId, target.task.id);
+}
+
+export function chipData(target: ChipTarget): TaskChipData {
+  return {
+    workspaceId: target.workspaceId,
+    projectId: target.task.projectId,
+    taskId: target.task.id,
+    ticketId: target.ticketId,
+    projectName: target.projectName ?? "",
+    columnName: target.columnName ?? "",
+  };
+}
+
+/** The composer chip. `title` is capped at 200 characters by the host. */
+export function chipFor(target: ChipTarget) {
+  return {
+    providerId: PROVIDER_ID,
+    id: target.task.id,
+    title: `${target.ticketId} ${target.task.title}`.slice(0, 200),
+    url: chipUrl(target),
+    text: taskContext(target.task, {
+      ticketId: target.ticketId,
+      ...(target.projectName ? { projectName: target.projectName } : {}),
+      ...(target.columnName ? { columnName: target.columnName } : {}),
+      url: chipUrl(target),
+    }),
+    author: target.task.assigneeName ?? undefined,
+    data: chipData(target),
+  };
+}
+
+export async function attachChip(target: ChipTarget): Promise<void> {
+  await host.attach(chipFor(target));
+}
+
+/** Attach, then open a fresh session with the task as first message. */
+export async function startSessionWithChip(
+  target: ChipTarget,
+  options: { projectId?: string } = {},
+): Promise<{ sessionId: string | null; sent: string; failure?: string }> {
+  const result = await host.startSession({
+    ...chipFor(target),
+    navigation: "preserve",
+    text: `Work on ${target.ticketId}. Start by reading the task and restating the plan before changing anything.`,
+    ...(options.projectId ? { projectId: options.projectId } : {}),
+  });
+  if (result.sessionId === null) {
+    return { sessionId: null, sent: result.sent, failure: result.failure };
+  }
+  return { sessionId: result.sessionId, sent: result.sent };
+}
+
+/**
+ * Attach, then open the session in a new worktree whose branch is named from
+ * the ticket, like Linear's start-from-issue. `sessionId` is `null` when the
+ * worktree was created but the session was not; the worktree is kept either
+ * way, so the caller should not blind-retry.
+ */
+export async function startWorktreeWithChip(
+  target: ChipTarget,
+  options: { projectId?: string } = {},
+): Promise<{ sessionId: string | null; sent: string; failure?: string; branch?: string }> {
+  const branch = branchForTicket(target.ticketId);
+  const result = await host.startSession({
+    ...chipFor(target),
+    navigation: "preserve",
+    worktree: { kind: "new", name: branch },
+    text: `Work on ${target.ticketId}. Start by reading the task and restating the plan before changing anything.`,
+    ...(options.projectId ? { projectId: options.projectId } : {}),
+  });
+  if (result.sessionId === null) {
+    return { sessionId: null, sent: result.sent, failure: result.failure, branch };
+  }
+  return { sessionId: result.sessionId, sent: result.sent, branch };
+}
+
+/** Put the task in the chat box without sending it. */
+export async function composeChip(target: ChipTarget): Promise<void> {
+  await host.compose({
+    mode: "append",
+    text: `\n${taskToMarkdown(target.task, {
+      ticketId: target.ticketId,
+      ...(target.columnName ? { columnName: target.columnName } : {}),
+      ...(chipUrl(target) ? { url: chipUrl(target) } : {}),
+    })}\n`,
+  });
+}
+
+export async function openInKaneo(target: ChipTarget): Promise<void> {
+  await host.openUrl(chipUrl(target));
+}
+
+/** Everything the panel offers on one task, gathered into a toast on failure. */
+export async function reportFailure(action: string, error: unknown): Promise<void> {
+  const message =
+    error instanceof Error ? `${action} failed: ${error.message}` : `${action} failed.`;
+  await host.toast({ kind: "error", message: message.slice(0, 400), dismiss: true });
+}

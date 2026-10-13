@@ -1,0 +1,7 @@
+node_modules/
+build/
+.DS_Store
+*.log
+
+# Per-machine kaneo CLI link (kaneo link); workspace ids are not shared
+.kaneo.json

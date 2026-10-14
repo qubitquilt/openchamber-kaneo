@@ -11,7 +11,9 @@ zip install. Run `npm run check`, which lints, typechecks, checks the manifest, 
 ## Layout
 
 ```
-src/shared/     code every surface shares: the API client, chip builders, preferences, stylesheet
+src/shared/     code every surface shares: the API client, the service transport and sign-in, chip
+                builders, preferences, stylesheet
+src/service/    the local service      -> service/main.js (Node)
 src/panel/      the rail panel        -> panel/main.js
 src/page/       the full-screen board -> panel/page.js
 src/attach/     the + picker          -> panel/attach.js
@@ -24,14 +26,22 @@ scripts/        the manifest check
 `src/shared/` must stay free of DOM-at-import-time work if you want it testable: `client.ts` and
 `format.ts` are bundled separately for `npm test` and run under Node.
 
+`src/service/` is the only Node code. It is typechecked by `tsconfig.service.json` (which turns on
+`@types/node`), not the surface `tsconfig.json` (which deliberately has `types: []`). It imports only
+`src/shared/constants.ts`, so the bundle stays small.
+
 ## Changing the Kaneo server
 
-`API_ORIGIN` in `src/shared/constants.ts` is the single source of truth. The manifest repeats it because
-OpenChamber only calls a declared origin. Change both, or `npm run check:manifest` fails.
+`API_ORIGIN` in `src/shared/constants.ts` is the service's build-time default origin and the web-app link
+base. A user can point the panel at another instance at runtime through the sign-in view's **Kaneo server
+URL** field (persisted as `serverUrl` in preferences, validated by `parseServerUrl` in
+`src/shared/workspace.ts`). The origin is stored with the token and reused for every later call.
 
 ## Conventions
 
-- `host.request` is the only network path. Never reach for `fetch`; the sandbox blocks it.
+- A surface talks to Kaneo only through the local service (`src/shared/service.ts` → `host.serviceRequest`).
+  Never reach for `fetch` from a surface; the sandbox blocks it. `src/service/main.ts` is the one place
+  that uses `fetch`, against the stored sign-in origin.
 - A surface that answers nothing on screen still registers `onReady` and bails when
   `ctx.surface` is not what it expects.
 - Render with `@openchamber/sdk/ui` first. Reach for `src/shared/dom.ts` `el()` only for layout the kit
@@ -47,13 +57,20 @@ OpenChamber only calls a declared origin. Change both, or `npm run check:manifes
 
 Four fences, named so a future contributor knows where they sit:
 
-- **Inbound trust.** Anything that comes back from `https://kaneo.qubitquilt.dev` is untrusted. Strings
-  go through `DOMPurify.sanitize` in `src/shared/dom.ts`; user-controlled colors go through
-  `safeBackgroundColor` (in `src/shared/colors.ts`) before they reach a `style=""` attribute; URLs only
-  open through `host.openUrl` after a `^https?://` check.
-- **Outbound trust.** The only network egress is `host.request`, which is locked to the `apiOrigin` in
-  the manifest, which is locked to `API_ORIGIN` in `src/shared/constants.ts`, which is locked by
-  `npm run check:manifest`. Adding a second origin means changing all three.
+- **Inbound trust.** Anything that comes back from the Kaneo server is untrusted. Strings go through
+  `DOMPurify.sanitize` in `src/shared/dom.ts`; user-controlled colors go through `safeBackgroundColor`
+  (in `src/shared/colors.ts`) before they reach a `style=""` attribute; URLs only open through
+  `host.openUrl` after a `^https?://` check.
+- **Outbound trust.** A surface's only egress is `host.serviceRequest`, which the host proxies to this
+  package's own loopback service. That service (`src/service/main.ts`) is the one component that reaches
+  the network, and it puts every call on the stored sign-in origin. It runs with the user's rights — the
+  approval dialog says so — so new outbound work belongs there or behind the client's route table, never
+  in a surface.
+- **Credential trust.** The device-flow token lives only in the service, on disk under
+  `~/.config/openchamber-kaneo/auth.json` (mode `0600`), with the origin it was minted for. It never
+  enters `host.storage`, the page, or a chip.
+- **Inbound server trust.** The sign-in origin comes from the panel's **Kaneo server URL** field, so it
+  is validated by `parseServerUrl`/the service's `normalizeOrigin` (a bare https origin) before any call.
 - **Storage trust.** The only writer of `host.storage` keys is this extension's code. Reads pass through
   a sanitizer in `src/shared/preferences.ts` (`read<T>(key, sanitize)`). A new key needs a sanitizer and
   a test.
@@ -62,8 +79,9 @@ Four fences, named so a future contributor knows where they sit:
   do not call `innerHTML` from a panel or page.
 
 The four entry HTMLs (`panel/*.html`, `background/index.html`) each carry a matching
-`Content-Security-Policy` meta. The canonical line lives in `scripts/csp-meta.mjs`; `check:manifest`
-fails when any entry drifts from it.
+`Content-Security-Policy` meta. The canonical line lives in `scripts/csp-meta.mjs`, and its
+`connect-src 'none'` records that the pages open no direct network; `check:manifest` fails when any
+entry drifts from it.
 
 ## Before you call a task done
 

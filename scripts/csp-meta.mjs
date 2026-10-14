@@ -14,12 +14,12 @@
  * root and the entry HTMLs carry a small inline `<style>`. Tightening this
  * means moving the inline rules into `SHARED_CSS`.
  *
- * `img-src data: https:`: avatar and label images come back from the Kaneo
- * server over `https:`; `data:` covers the inline ones.
+ * `img-src data: https:`: avatars are initials and the logo is inline, but the
+ * rule stays for any future remote image; `data:` covers the inline ones.
  *
- * `connect-src https://kaneo.qubitquilt.dev`: the only network egress. Any
- * future telemetry that wants a different origin must add it here and to the
- * manifest, so both lists are reviewed in one diff.
+ * `connect-src 'none'`: the surfaces reach Kaneo only through the local
+ * service (`host.serviceRequest` is postMessage, not `fetch`), so the page
+ * opens no direct network at all.
  *
  * `base-uri 'none'`, `form-action 'none'`: the surfaces have no `<base>` and
  * no forms; refusing both stops a misnested HTML block from quietly
@@ -30,14 +30,14 @@
  *
  * The literal:
  *
- *   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data: https:; connect-src https://kaneo.qubitquilt.dev; base-uri 'none'; form-action 'none'; frame-ancestors *">
+ *   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data: https:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors *">
  */
 export const CSP_DIRECTIVES = [
   "default-src 'none'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src data: https:",
-  "connect-src https://kaneo.qubitquilt.dev",
+  "connect-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors *",

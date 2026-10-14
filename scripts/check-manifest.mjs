@@ -54,7 +54,7 @@ const REQUIRED_PROVIDER_ID = await readProviderId();
 const manifestText = await readFile(resolve(root, "package.json"), "utf8");
 const manifest = JSON.parse(manifestText);
 const contributes = manifest.openchamber?.contributes ?? {};
-const token = contributes.integration?.token ?? {};
+const service = contributes.service ?? {};
 
 // The primary gate: the host's own parser. When it fails, `problem` reads the
 // real reason the install would be refused, not the toast's generic text.
@@ -71,13 +71,22 @@ if (manifest.openchamber?.apiVersion !== 1) {
 if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(manifest.version ?? "")) {
   problems.push(`version must be semver, found ${JSON.stringify(manifest.version)}.`);
 }
-if (REQUIRED_API_ORIGIN && token.apiOrigin !== REQUIRED_API_ORIGIN) {
+// The local service owns the Kaneo sign-in and every API call. A wrong entry
+// path installs but fails to spawn, so the build proves the file is built.
+if (service.entry !== "service/main.js") {
   problems.push(
-    `integration.token.apiOrigin is ${JSON.stringify(token.apiOrigin)}, expected ${REQUIRED_API_ORIGIN}. Change one of them.`,
+    `openchamber.contributes.service.entry must be "service/main.js", found ${JSON.stringify(service.entry)}.`,
   );
 }
-if (token.scheme !== "bearer") {
-  problems.push('integration.token.scheme must be "bearer" for the Kaneo API key.');
+if (service.runtime !== "host") {
+  problems.push(
+    `openchamber.contributes.service.runtime must be "host", found ${JSON.stringify(service.runtime)}.`,
+  );
+}
+try {
+  await readFile(resolve(root, "service/main.js"), "utf8");
+} catch {
+  problems.push("service/main.js is not built. Run npm run build.");
 }
 
 // Ids and command names are kebab-case starting with a letter. OpenChamber
@@ -130,12 +139,6 @@ if (
   );
 }
 
-// The CSP the entry HTMLs must carry; the `connect-src` origin must match
-// `apiOrigin` so a manifest drift does not leave a stale CSP behind.
-const expectedConnectSrc = REQUIRED_API_ORIGIN
-  ? new RegExp(`connect-src [^;]*${REQUIRED_API_ORIGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
-  : null;
-
 // Every declared HTML entry must ship, and every script it loads must be built.
 const entries = new Set();
 if (contributes.panel?.entry) entries.add(contributes.panel.entry);
@@ -183,6 +186,9 @@ for (const entry of entries) {
       "default-src 'none'",
       "script-src 'self'",
       "img-src data: https:",
+      // The panel reaches Kaneo only through the local service, so it opens no
+      // direct network at all; `connect-src 'none'` says so.
+      "connect-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
     ];
@@ -190,14 +196,6 @@ for (const entry of entries) {
       if (!csp.includes(directive)) {
         problems.push(`${entry} CSP is missing directive: ${directive}`);
       }
-    }
-    if (REQUIRED_API_ORIGIN && !csp.includes(REQUIRED_API_ORIGIN)) {
-      problems.push(
-        `${entry} CSP connect-src does not list ${REQUIRED_API_ORIGIN}; an out-of-date meta tag is still in place.`,
-      );
-    }
-    if (expectedConnectSrc && !expectedConnectSrc.test(csp)) {
-      problems.push(`${entry} CSP connect-src is missing ${REQUIRED_API_ORIGIN}.`);
     }
     // The full canonical string must be present, so a contributor who changes
     // one directive notices the others have to follow.
@@ -229,5 +227,5 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `Manifest check passed: ${entries.size} entries, apiOrigin ${token.apiOrigin}, csp enforced.`,
+  `Manifest check passed: ${entries.size} entries, service ${service.entry}, apiOrigin ${REQUIRED_API_ORIGIN ?? "(none)"}, csp enforced.`,
 );

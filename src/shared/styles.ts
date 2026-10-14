@@ -152,6 +152,7 @@ html, body {
 
 .filters { gap: 4px; }
 .filter-active .oc-sdk-btn { color: var(--k-primary-text); }
+/* filter-refresh carries margin-left: auto so refresh and the account menu both end up on the right edge of the filter row. */
 .filter-refresh { margin-left: auto; }
 .scope { gap: 8px; }
 
@@ -628,6 +629,38 @@ html, body {
   font-size: var(--k-text-ui);
   font-weight: 600;
 }
+
+/* The device-code sign-in: the empty state, and the code card once started. */
+.signin-fill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.signin-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.signin-hint { margin: 0; font-size: var(--k-text-ui); color: var(--k-muted); }
+.signin-code {
+  font-family: var(--k-mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--k-muted-surface);
+  border: 1px solid var(--k-border);
+  color: var(--k-fg);
+  user-select: all;
+}
+.signin-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.signin-waiting { min-height: 24px; }
 `;
 
 /** Add the stylesheet once per document. Safe to call on every `onReady`. */

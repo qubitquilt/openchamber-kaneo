@@ -1,3 +1,4 @@
+import { API_ORIGIN } from "./constants";
 import { host } from "./host";
 import { loadPreferences, savePreferences } from "./preferences";
 import type { CurrentUser, ProjectListItem, Workspace } from "./types";
@@ -47,7 +48,7 @@ export class NotConnectedError extends Error {
   readonly reason: unknown;
 
   constructor(reason?: unknown) {
-    super("Kaneo is not connected. Add an API token in Settings → Integrations → Kaneo.");
+    super("Kaneo is not connected. Sign in with Kaneo from the extension's empty state.");
     this.name = "NotConnectedError";
     this.reason = reason;
   }
@@ -55,9 +56,8 @@ export class NotConnectedError extends Error {
 
 /**
  * Resolve the account, the workspace and the projects every surface starts
- * from. The workspace comes from stored preferences, then from the
- * `workspace` field on the integration card, then from the first workspace the
- * account can see.
+ * from. The workspace comes from stored preferences, then from the seed slug,
+ * then from the first workspace the account can see.
  */
 export async function bootstrap(
   client: {
@@ -140,9 +140,9 @@ export async function invalidateBootstrapCache(): Promise<void> {
 }
 
 /**
- * The project to show: the stored choice, else the slug mapped on the
- * integration card, else the first project. A stored choice that was
- * archived, deleted or moved falls through to the later candidates.
+ * The project to show: the stored choice, else the seed slug, else the first
+ * project. A stored choice that was archived, deleted or moved falls through
+ * to the later candidates.
  */
 export function resolveProject(
   projects: ProjectListItem[],
@@ -157,20 +157,47 @@ export function resolveProject(
   return mapped ?? (projects[0] as ProjectListItem);
 }
 
-/** The integration card's free-text fields, as `ready.settings`. */
+/**
+ * The declared settings, as `ready.settings`. The extension declares none (no
+ * integration card), so every field reads `undefined` and the surfaces fall
+ * back to their persisted selection.
+ */
 export function readSettings(settings: Record<string, string> | undefined): {
   workspaceSlug: string | undefined;
   projectSlug: string | undefined;
-  openchamberUrl: string | undefined;
 } {
   const workspace = settings?.workspace?.trim();
   const project = settings?.project?.trim();
-  const url = settings?.["openchamber-url"]?.trim();
   return {
     workspaceSlug: workspace || undefined,
     projectSlug: project || undefined,
-    openchamberUrl: url || undefined,
   };
+}
+
+/**
+ * Validate a typed server URL to a bare https origin, or report the problem.
+ * Empty means the bundled origin, which is what the field defaults to.
+ */
+export function parseServerUrl(value: string | undefined): {
+  origin: string;
+  error: string | null;
+} {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return { origin: API_ORIGIN, error: null };
+  try {
+    const url = new URL(trimmed);
+    const bare =
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      (url.pathname === "/" || url.pathname === "") &&
+      !url.search &&
+      !url.hash;
+    if (bare) return { origin: url.origin, error: null };
+  } catch {
+    // Not a URL; fall through to the error.
+  }
+  return { origin: API_ORIGIN, error: "Enter an https origin, like https://cloud.kaneo.app." };
 }
 
 /** Shared badge: how many tasks are open for the account across the workspace. */

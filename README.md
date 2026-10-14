@@ -18,44 +18,79 @@ timeline, then one row of actions. The attach picker is the host's reference-pic
 left, a preview of the highlighted task on the right, and Attach in the footer. An attached chip carries the
 description and the comments, so the agent reads what the team already said.
 
-A session started from any surface is remembered, so the task gets started, completed and failed status comments once
-you set an OpenChamber web URL in the integration settings.
+A session started from any surface is remembered, so the task gets started, completed and failed status comments from
+whichever Kaneo surface is open.
 
 ## Install
 
-1. Create an API token in Kaneo under **Settings, Account, API Keys**. It needs `project:read`,
-   `project:update`, `task:read`, `task:update` and `task:create`.
-2. Run OpenChamber on web or desktop, open **Settings → Integrations → Kaneo**, and paste the token.
-   The card shows the account name once it works.
-3. Open **Settings → Extensions**, paste the absolute path of this folder, and click **Add**. Approve the
-   capability list.
-4. Open the Kaneo icon on the rail.
+1. Run OpenChamber on web or desktop, open **Settings → Extensions**, paste the absolute path of this
+   folder, and click **Add**. Approve the capability list, including the **local service** it asks for.
+2. Open the Kaneo icon on the rail. It shows a **Kaneo server URL** field and a **Sign in with Kaneo**
+   button. Leave the field blank for Kaneo Cloud, or type your instance (for example
+   `https://kaneo.qubitquilt.dev`).
+3. Click **Sign in with Kaneo**. OpenChamber shows a short code and opens that server's Kaneo sign-in
+   page; enter the code and approve. This is the `kaneo login` flow — no token, client id or redirect to
+   enter.
+4. The panel loads once approved. The `+` picker, the board page and `/kaneo` all share the same login.
+
+The server URL is remembered, so a later sign-in and every request go back to the same instance. Sign out
+from the account menu in the panel or the board toolbar; sign in again to switch accounts.
+
+There is no card on **Settings → Integrations**. OpenChamber's card runs its own OAuth, which needs a
+registered client id and a redirect URI that Kaneo accepts only over `https` or loopback — neither fits a
+tailnet `http` origin. The panel's device flow uses no redirect URI and no client id, so it works anywhere.
 
 A folder install runs from this folder, so edit, `npm run build`, and reload. A Git install copies the
-folder instead, so commit the built `panel/*.js` and `background/*.js` and bump `version` to ship an
-update.
+folder instead, so commit the built `panel/*.js`, `background/*.js` and `service/main.js` and bump
+`version` to ship an update.
+
+## How sign-in works
+
+OpenChamber sandboxes an extension's page and lets the host attach a credential only to `host.request`; a
+guest has no call to store one, and OpenChamber's guest OAuth needs a pasted client id. So the part of the
+`kaneo` CLI that signs in lives in a **local service**: a Node process the host spawns from this package
+(`service/main.js`). It runs Kaneo's device authorization, keeps the access token, and forwards the
+panel's API calls with it.
+
+1. The panel asks the service for a device code (`POST /api/auth/device/code`).
+2. The service returns the code and the verification URL; the panel shows the code and opens the URL.
+3. The service polls `/api/auth/device/token`; once Kaneo issues the token it stores it, and the panel
+   loads.
+
+The token never enters the page. It is written to
+`$XDG_CONFIG_HOME/openchamber-kaneo/auth.json` (or `~/.config/openchamber-kaneo/auth.json`), mode `0600`,
+alongside the origin it was signed in against. Kaneo issues a 30-day token with no refresh, so a
+long-idle install asks you to sign in again.
+
+The service runs with your user's rights — the approval dialog says so — which is why this extension is
+not a pure sandboxed guest. It reaches the network only for the configured origin.
+
+## The server URL
+
+The panel's sign-in reads a **Kaneo server URL**, remembered in the extension's own storage. Blank means
+the bundled origin; anything else must be a bare `https` origin. The origin is stored with the token, so
+every later call goes back to the instance it was signed in against. The service validates it again
+before use.
 
 ## Point it at your own Kaneo
 
-The origin is declared once in `src/shared/constants.ts` and mirrored in the manifest:
+Two ways, and they compose:
 
-- `src/shared/constants.ts` → `API_ORIGIN`
-- `package.json` → `openchamber.contributes.integration.token.apiOrigin`
-
-`npm run check:manifest` fails when the two disagree, because a stale manifest sends every request to the
-wrong server with no runtime warning. To retarget the extension, change both. The web-app links the panel
-opens are derived from the same origin by dropping the trailing `/api`.
+- **At runtime:** the panel's **Kaneo server URL** field. Leave it blank for cloud, or set it to another
+  instance. No rebuild.
+- **At build time:** change `API_ORIGIN` in `src/shared/constants.ts` — the service's default origin and
+  the web-app links the panel opens — and rerun `npm run build`. That is the origin a blank field means.
 
 ## Develop
 
 ```sh
 npm ci
 npm run check      # lint, format, typecheck, manifest check, build, tests
-npm run build      # rebuild the four bundles OpenChamber loads
+npm run build      # rebuild the bundles OpenChamber loads
 npm test           # pure logic only: the API client and the formatters
 ```
 
-OpenChamber never compiles TypeScript. The four built bundles are what ship:
+OpenChamber never compiles TypeScript. The built bundles are what ship:
 
 | Source                   | Built file           | Loaded by                                                 |
 | ------------------------ | -------------------- | --------------------------------------------------------- |
@@ -63,24 +98,28 @@ OpenChamber never compiles TypeScript. The four built bundles are what ship:
 | `src/page/main.ts`       | `panel/page.js`      | `panel/page.html`, the full-screen board                  |
 | `src/attach/main.ts`     | `panel/attach.js`    | `panel/attach.html`, the `+` picker and open-mode actions |
 | `src/background/main.ts` | `background/main.js` | `background/index.html`, the `/kaneo` resolver            |
+| `src/service/main.ts`    | `service/main.js`    | the host-spawned local service (Node)                     |
 
-`src/shared/` holds everything the four bundles share: the Kaneo API client, the attachment builders, the
-persisted preferences and the stylesheet.
+`src/shared/` holds everything the surfaces share: the API client, the service client and sign-in
+helpers, the attachment builders, the persisted preferences and the stylesheet. `src/service/main.ts` is
+a Node bundle with its own `tsconfig.service.json`.
 
 ## Capabilities
 
-The extension asks for `prompt`, `sessions` and `model`, and the declared integration adds `network`.
+The extension asks for `prompt` and `sessions`, and `contributes.service` adds `service` (the local
+process the user approves at install). There is no `contributes.integration`, so no `network` capability
+and no Integrations card.
 
 - `prompt` and `sessions` cover `host.attach`, `host.compose`, `host.startSession` and `host.prompt`.
-- `model` is declared so a drafted task description can be improved with `host.generate`; drop it from the
-  manifest if you do not add that.
 
-The page never sees the Kaneo token. OpenChamber attaches it to every `host.request` call.
+The page never sees a Kaneo access token; the local service holds the device-flow token and forwards
+every call.
 
 ## API surface
 
-Every call goes through `src/shared/client.ts`, which is the only place that knows Kaneo's routes. The
-routes it uses, all under the declared origin:
+Every call goes through `src/shared/client.ts`, which is the only place that knows Kaneo's routes, and
+`src/shared/service.ts`, which carries each one to the local service. The routes, under the signed-in
+origin:
 
 | Call                 | Route                                              |
 | -------------------- | -------------------------------------------------- |
@@ -103,13 +142,13 @@ the panel.
 
 ## Notes
 
-- Extensions load in OpenChamber web and desktop. VS Code and mobile do not load them.
+- Extensions load in OpenChamber web and desktop. VS Code and mobile do not load them, and neither
+  spawns the local service.
 - The selected workspace and project are remembered per server in `host.storage`, and are shared by all
   four surfaces. A stale project choice falls back to the first project in the workspace.
-- The `workspace` field on the integration card seeds the first workspace on a fresh install. Leave it
-  blank to take the first one the token can see.
-- Status comments are English and read by the whole team, so they only post when you set an OpenChamber
-  web URL. Without it the extension leaves the task untouched apart from the chip you attach.
+- Requests made with the session token are not counted against a Kaneo API key's rate limit.
+- Status comments are English and read by the whole team; they post as plain text (no OpenChamber web URL
+  is configured).
 - The newest 50 task-linked sessions are remembered for those comments; older links fall off. A session
   that outlives every open Kaneo surface posts no further comments, because the watcher lives in the
   surface, unlike Linear's server-side event hub.
@@ -124,6 +163,7 @@ trust boundaries and code conventions a PR is expected to respect.
 ## Security
 
 Report a vulnerability through `SECURITY.md`. The four entry HTMLs each carry a `Content-Security-Policy`
-meta; the canonical line lives in `scripts/csp-meta.mjs` and the build fails when an entry drifts.
-The only network egress is `host.request`, locked to the origin declared in
-`src/shared/constants.ts` and mirrored in the manifest.
+meta; the canonical line lives in `scripts/csp-meta.mjs` and the build fails when an entry drifts. The
+panel opens no direct network (`connect-src 'none'`); every Kaneo call travels through the host proxy to
+the local service. The service is the one component that reaches Kaneo directly, and the one that runs
+with the user's rights.

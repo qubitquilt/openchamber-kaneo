@@ -1,5 +1,6 @@
 import { createKaneoClient } from "../shared/client";
 import { host } from "../shared/host";
+import { serviceTransport } from "../shared/service";
 import { chipFor } from "../shared/attachments";
 import { columnLabel, ticketIdOf } from "../shared/format";
 import { loadPreferences } from "../shared/preferences";
@@ -13,7 +14,7 @@ import { loadPreferences } from "../shared/preferences";
  * `#root` hidden, and `ctx.surface` is `background` for every invocation.
  */
 
-const client = createKaneoClient((input) => host.request(input));
+const client = createKaneoClient(serviceTransport);
 
 /** `GEN-4`, `GEN 4`, or a bare `4` resolved against the selected project. */
 function normalizeTicketId(raw: string, projectSlug: string | undefined): string | null {

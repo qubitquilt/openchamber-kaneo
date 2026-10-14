@@ -5,20 +5,21 @@
   "type": "module",
   "description": "OpenChamber extension for Kaneo: rail panel, attach picker, chat chips and a full-screen board.",
   "scripts": {
-    "build": "npm run build:panel && npm run build:page && npm run build:attach && npm run build:background",
+    "build": "npm run build:panel && npm run build:page && npm run build:attach && npm run build:background && npm run build:service",
     "build:panel": "esbuild src/panel/main.ts --bundle --format=iife --platform=browser --target=es2022 --minify --legal-comments=none --outfile=panel/main.js",
     "build:page": "esbuild src/page/main.ts --bundle --format=iife --platform=browser --target=es2022 --minify --legal-comments=none --outfile=panel/page.js",
     "build:attach": "esbuild src/attach/main.ts --bundle --format=iife --platform=browser --target=es2022 --minify --legal-comments=none --outfile=panel/attach.js",
     "build:background": "esbuild src/background/main.ts --bundle --format=iife --platform=browser --target=es2022 --minify --legal-comments=none --outfile=background/main.js",
-    "typecheck": "tsc --noEmit",
+    "build:service": "esbuild src/service/main.ts --bundle --format=esm --platform=node --target=node20 --minify --legal-comments=none --outfile=service/main.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.service.json",
     "lint": "eslint src test scripts eslint.config.mjs",
     "lint:fix": "eslint src test scripts eslint.config.mjs --fix",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json eslint.config.mjs README.md AGENTS.md .github/**/*.md .github/**/*.yml",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json eslint.config.mjs README.md AGENTS.md .github/**/*.md .github/**/*.yml",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json tsconfig.service.json eslint.config.mjs README.md AGENTS.md .github/**/*.md .github/**/*.yml",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"panel/*.html\" \"background/*.html\" package.json tsconfig.json tsconfig.service.json eslint.config.mjs README.md AGENTS.md .github/**/*.md .github/**/*.yml",
     "check:manifest": "node scripts/check-manifest.mjs",
     "test": "npm run build:test && node --test test/*.test.mjs",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run check:manifest && npm run build && npm test",
-    "clean": "node -e \"for (const f of ['panel/main.js','panel/page.js','panel/attach.js','background/main.js']) require('node:fs').rmSync(f,{force:true}); require('node:fs').rmSync('build',{recursive:true,force:true})\"",
+    "clean": "node -e \"for (const f of ['panel/main.js','panel/page.js','panel/attach.js','background/main.js','service/main.js']) require('node:fs').rmSync(f,{force:true}); require('node:fs').rmSync('build',{recursive:true,force:true})\"",
     "build:test": "esbuild src/shared/format.ts src/shared/client.ts src/shared/session-links.ts src/shared/colors.ts --bundle --format=esm --platform=neutral --target=es2022 --outdir=build --out-extension:.js=.mjs"
   },
   "openchamber": {
@@ -48,11 +49,15 @@
         "prompt",
         "sessions"
       ],
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      },
       "actions": [
         {
           "id": "create-task",
           "label": "Create Kaneo task",
-          "icon": "add-line",
+          "icon": "assets/kaneo.svg",
           "where": "message",
           "roles": [
             "user",
@@ -73,33 +78,7 @@
           "name": "kaneo",
           "description": "Attach a Kaneo task by ticket id, for example GEN-4"
         }
-      ],
-      "integration": {
-        "name": "Kaneo",
-        "description": "Tasks from your Kaneo instance.",
-        "token": {
-          "apiOrigin": "https://kaneo.qubitquilt.dev",
-          "account": {
-            "path": "/user/me",
-            "name": "email"
-          },
-          "scheme": "bearer"
-        },
-        "settings": [
-          {
-            "id": "workspace",
-            "label": "Workspace slug (optional, used on first open)"
-          },
-          {
-            "id": "project",
-            "label": "Default project slug (optional, e.g. GEN)"
-          },
-          {
-            "id": "openchamber-url",
-            "label": "OpenChamber web URL (optional, links session comments)"
-          }
-        ]
-      }
+      ]
     }
   },
   "dependencies": {

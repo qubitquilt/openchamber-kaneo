@@ -15,6 +15,9 @@ import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, PRIORITY_RANK, PROVIDER_ID, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
+import { disconnect } from "../shared/auth";
+import { mountSignIn } from "../shared/signin";
+import { kaneoAccount, serviceTransport } from "../shared/service";
 import { reportFailure, type ChipTarget } from "../shared/attachments";
 import { detailScaffold, type CommentState } from "../shared/detail";
 import { columnLabel, priorityLabel, ticketIdOf } from "../shared/format";
@@ -41,7 +44,7 @@ import {
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("Kaneo panel is missing its #root element.");
 
-const client = createKaneoClient((input) => host.request(input));
+const client = createKaneoClient(serviceTransport);
 
 interface PanelState {
   ready: HostReadyContext | null;
@@ -87,6 +90,7 @@ const state: PanelState = {
     assigneeFilter: "any",
     labelFilter: null,
     createInWorktree: false,
+    serverUrl: "",
   },
   search: "",
   loading: true,
@@ -180,6 +184,15 @@ function anyFilterActive(): boolean {
     assigneeFilter !== "any" ||
     labelFilter !== null
   );
+}
+
+/** The menu label for the signed-in account. Prefers the host's `account`, then the loaded user. */
+function accountLabel(): string {
+  const fromHost = state.ready?.connection?.account?.trim();
+  if (fromHost) return fromHost;
+  const fromUser = state.context?.user?.email?.trim();
+  if (fromUser) return fromUser;
+  return "Kaneo account";
 }
 
 /* ------------------------------------------------------------------- data */
@@ -278,19 +291,43 @@ async function load(options: { keepDetail?: boolean } = {}): Promise<void> {
  */
 let resultsRoot: HTMLElement | null = null;
 
+/**
+ * The sign-in view is mounted once and kept across renders, so its polling
+ * survives a theme repaint instead of being torn down and restarted. It is
+ * disposed when the user connects or disconnects.
+ */
+let signInRoot: HTMLElement | null = null;
+let disposeSignIn: (() => void) | null = null;
+/** False until the service has told us whether a token exists, to avoid a flash of sign-in. */
+let accountsResolved = false;
+
+function showSignIn(): void {
+  if (!signInRoot) {
+    signInRoot = el("div", { className: "signin-fill" });
+    disposeSignIn = mountSignIn(signInRoot, () => void onSignedIn());
+  }
+  root?.append(signInRoot);
+}
+
+function clearSignIn(): void {
+  disposeSignIn?.();
+  disposeSignIn = null;
+  signInRoot = null;
+}
+
 function render(): void {
   if (!root) return;
   clear(root);
   resultsRoot = null;
 
   if (!state.connected) {
-    const holder = el("div", { style: "flex:1; display:flex; align-items:center;" });
-    root.append(holder);
-    mountEmpty(holder, {
-      title: "Kaneo is not connected",
-      body: "Add an API token in Settings → Integrations → Kaneo. Create one in Kaneo under Settings, Account, API Keys.",
-      action: { label: "Reload", onClick: () => void load() },
-    });
+    if (!accountsResolved) {
+      const holder = el("div", { style: "flex:1; display:flex; align-items:center;" });
+      root.append(holder);
+      mountSpinner(holder, { label: "Loading Kaneo" });
+      return;
+    }
+    showSignIn();
     return;
   }
 
@@ -532,6 +569,18 @@ function renderToolbar(): HTMLElement {
     onClick: () => void load({ keepDetail: true }),
   });
 
+  const accountHolder = el("div", { className: "filter-account" });
+  bar.append(accountHolder);
+  mountMenu(accountHolder, {
+    label: accountLabel(),
+    size: "sm",
+    variant: "ghost",
+    items: [{ id: "disconnect", label: "Disconnect", destructive: true }],
+    onSelect: (id) => {
+      if (id === "disconnect") void onDisconnect();
+    },
+  });
+
   wrap.append(bar);
 
   const scopes = el("div", { className: "toolbar scope" });
@@ -731,32 +780,46 @@ function openAttachPicker(): void {
   });
 }
 
-/** Mount the panel once, then refresh when the theme or the connection moves. */
+/** Mount the panel once, then refresh when the theme moves. */
 host.onReady((ctx) => {
   applyHostReady(ctx, document.documentElement);
   installStyles();
   document.body.dataset.theme = ctx.theme.mode;
   document.body.dataset.surface = ctx.surface;
   state.ready = ctx;
-  state.connected = ctx.connection.connected;
   render();
-  // Without a token every call answers 401, so the panel stays on the connect
-  // screen instead of flashing an error banner. Later `onReady` calls are
-  // theme or session updates, which must not refetch the whole board.
-  if (state.connected && !booted) {
+  // The connection is the local service's token, not a host integration, so it
+  // is read here once and again after a sign-in. Later `onReady` calls are
+  // theme or session updates that must not refetch the whole board.
+  if (!booted) {
     booted = true;
-    void load();
+    void refreshConnection();
   }
 });
 
-host.onConnection((connection) => {
-  const wasConnected = state.connected;
-  state.connected = connection.connected;
-  if (wasConnected === connection.connected) return;
+async function refreshConnection(): Promise<void> {
+  state.connected = Boolean((await kaneoAccount().catch(() => null))?.connected);
+  accountsResolved = true;
   render();
-  // Reconnecting is the one time after the first load that the data is stale.
-  if (connection.connected) void load();
-});
+  if (state.connected) void load();
+}
+
+async function onSignedIn(): Promise<void> {
+  clearSignIn();
+  state.connected = true;
+  await load();
+}
+
+async function onDisconnect(): Promise<void> {
+  await disconnect();
+  clearSignIn();
+  state.connected = false;
+  state.context = null;
+  state.board = null;
+  state.mine = [];
+  state.mineLoaded = false;
+  render();
+}
 
 // Status comments on Kaneo for sessions this extension started. The
 // OpenChamber web URL is optional; without it the comment has no link.

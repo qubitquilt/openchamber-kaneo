@@ -22,7 +22,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type QueryValue = string | number | boolean | undefined | null;
 
-/** Exactly the shape `host.request` accepts, so it can be passed straight in. */
+/** Exactly the shape `host.serviceRequest` accepts, so it can be passed straight in. */
 export interface RequestInput {
   method: HttpMethod;
   path: string;
@@ -36,8 +36,8 @@ export interface RequestResult {
 }
 
 /**
- * The transport. `host.request` from `@openchamber/sdk` matches this shape, and
- * so does a plain stub in tests.
+ * The transport. `serviceTransport` in `src/shared/service.ts` matches this
+ * shape, and so does a plain stub in tests.
  */
 export type RequestFn = (input: RequestInput) => Promise<RequestResult>;
 

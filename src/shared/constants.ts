@@ -1,12 +1,12 @@
 /**
- * Values the manifest and every surface have to agree on.
+ * Values every surface and the service share.
  *
- * `API_ORIGIN` is the one source of truth for the Kaneo server. The manifest
- * copies it into `openchamber.contributes.integration.token.apiOrigin` because
- * OpenChamber only calls the origin declared there. `npm run check:manifest`
- * fails the build when the two drift apart.
+ * `API_ORIGIN` is the one source of truth for the Kaneo server. The service
+ * (`src/service/main.ts`) is the only place that reaches it, for the sign-in
+ * and every forwarded call, so retargeting the extension means changing this
+ * one line and rebuilding.
  */
-export const API_ORIGIN = "https://kaneo.qubitquilt.dev";
+export const API_ORIGIN = "https://cloud.kaneo.app";
 
 /** The web app origin, used to build the "open in Kaneo" links. */
 export const WEB_ORIGIN = API_ORIGIN.replace(/\/api\/?$/, "");

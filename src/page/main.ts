@@ -15,6 +15,9 @@ import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, PRIORITY_RANK, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
+import { disconnect } from "../shared/auth";
+import { mountSignIn } from "../shared/signin";
+import { kaneoAccount, serviceTransport } from "../shared/service";
 import { reportFailure, type ChipTarget } from "../shared/attachments";
 import { labelChip } from "../shared/chips";
 import { detailScaffold, type CommentState } from "../shared/detail";
@@ -49,7 +52,7 @@ import {
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("Kaneo board is missing its #root element.");
 
-const client = createKaneoClient((input) => host.request(input));
+const client = createKaneoClient(serviceTransport);
 
 interface BoardState {
   ready: HostReadyContext | null;
@@ -92,6 +95,7 @@ const state: BoardState = {
     assigneeFilter: "any",
     labelFilter: null,
     createInWorktree: false,
+    serverUrl: "",
   },
   search: "",
   detailId: null,
@@ -111,6 +115,15 @@ function describe(error: unknown): string {
   if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/** The menu label for the signed-in account. Prefers the host's `account`, then the loaded user. */
+function accountLabel(): string {
+  const fromHost = state.ready?.connection?.account?.trim();
+  if (fromHost) return fromHost;
+  const fromUser = state.context?.user?.email?.trim();
+  if (fromUser) return fromUser;
+  return "Kaneo account";
 }
 
 /**
@@ -282,6 +295,26 @@ async function moveTask(taskId: string, columnId: string): Promise<void> {
  */
 let resultsRoot: HTMLElement | null = null;
 
+/** The sign-in view, mounted once and kept across renders so its polling lives. */
+let signInRoot: HTMLElement | null = null;
+let disposeSignIn: (() => void) | null = null;
+/** False until the service has told us whether a token exists. */
+let accountsResolved = false;
+
+function showSignIn(): void {
+  if (!signInRoot) {
+    signInRoot = el("div", { className: "signin-fill" });
+    disposeSignIn = mountSignIn(signInRoot, () => void onSignedIn());
+  }
+  root?.append(signInRoot);
+}
+
+function clearSignIn(): void {
+  disposeSignIn?.();
+  disposeSignIn = null;
+  signInRoot = null;
+}
+
 function render(): void {
   if (!root) return;
   clear(root);
@@ -293,11 +326,11 @@ function render(): void {
   }
 
   if (!state.connected) {
-    mountEmpty(root, {
-      title: "Kaneo is not connected",
-      body: "Add an API token in Settings → Integrations → Kaneo.",
-      action: { label: "Reload", onClick: () => void load() },
-    });
+    if (!accountsResolved) {
+      mountSpinner(root, { label: "Loading Kaneo" });
+      return;
+    }
+    showSignIn();
     return;
   }
 
@@ -441,6 +474,18 @@ function renderBar(): HTMLElement {
     size: "sm",
     loading: state.loading,
     onClick: () => void load(),
+  });
+
+  const accountHolder = el("div");
+  bar.append(accountHolder);
+  mountMenu(accountHolder, {
+    label: accountLabel(),
+    size: "sm",
+    variant: "ghost",
+    items: [{ id: "disconnect", label: "Disconnect", destructive: true }],
+    onSelect: (id) => {
+      if (id === "disconnect") void onDisconnect();
+    },
   });
 
   bar.append(kaneoWordmark("Kaneo"));
@@ -925,24 +970,37 @@ host.onReady((ctx) => {
   document.body.dataset.theme = ctx.theme.mode;
   document.body.dataset.surface = ctx.surface;
   state.ready = ctx;
-  state.connected = ctx.connection.connected;
   render();
-  // Without a token every call answers 401, so the board stays on the connect
-  // screen instead of flashing an error banner. Later `onReady` calls are
-  // theme or session updates, which must not refetch the board.
-  if (state.connected && !booted) {
+  // The connection is the local service's token, not a host integration, so it
+  // is read here once and again after a sign-in. Later `onReady` calls are
+  // theme or session updates that must not refetch the board.
+  if (!booted) {
     booted = true;
-    void load();
+    void refreshConnection();
   }
 });
 
-host.onConnection((connection) => {
-  const wasConnected = state.connected;
-  state.connected = connection.connected;
-  if (wasConnected === connection.connected) return;
+async function refreshConnection(): Promise<void> {
+  state.connected = Boolean((await kaneoAccount().catch(() => null))?.connected);
+  accountsResolved = true;
   render();
-  if (connection.connected) void load();
-});
+  if (state.connected) void load();
+}
+
+async function onSignedIn(): Promise<void> {
+  clearSignIn();
+  state.connected = true;
+  await load();
+}
+
+async function onDisconnect(): Promise<void> {
+  await disconnect();
+  clearSignIn();
+  state.connected = false;
+  state.context = null;
+  state.board = null;
+  render();
+}
 
 // Status comments on Kaneo for sessions this extension started.
 host.onReady((ctx) => {

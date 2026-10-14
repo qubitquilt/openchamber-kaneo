@@ -23,6 +23,8 @@ import { KaneoError, createKaneoClient } from "../shared/client";
 import { PRIORITIES, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
+import { mountSignIn } from "../shared/signin";
+import { kaneoAccount, serviceTransport } from "../shared/service";
 import {
   attachChip,
   openInKaneo,
@@ -56,7 +58,7 @@ import {
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("Kaneo attach dialog is missing its #root element.");
 
-const client = createKaneoClient((input) => host.request(input));
+const client = createKaneoClient(serviceTransport);
 const TITLE_MAX = 200;
 /** Below this the dialog shows the list or the preview, never both. */
 const NARROW_WIDTH = 560;
@@ -124,6 +126,34 @@ let renderSearch = 0;
 let booted = false;
 /** The board is loaded on the first connect and after a reconnect. */
 let loaded = false;
+
+/** The sign-in view, mounted once and kept across renders so its polling lives. */
+let signInRoot: HTMLElement | null = null;
+let disposeSignIn: (() => void) | null = null;
+/** False until the service has told us whether a token exists. */
+let accountsResolved = false;
+let accountsChecking = false;
+
+function showSignIn(): void {
+  if (!signInRoot) {
+    signInRoot = el("div", { className: "signin-fill" });
+    disposeSignIn = mountSignIn(signInRoot, () => void onSignedIn());
+  }
+  root?.append(signInRoot);
+}
+
+function clearSignIn(): void {
+  disposeSignIn?.();
+  disposeSignIn = null;
+  signInRoot = null;
+}
+
+async function onSignedIn(): Promise<void> {
+  clearSignIn();
+  state.connected = true;
+  loaded = true;
+  await load();
+}
 
 function describe(error: unknown): string {
   if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
@@ -346,10 +376,11 @@ function render(): void {
     return;
   }
   if (!state.connected) {
-    mountEmpty(root, {
-      title: "Kaneo is not connected",
-      body: "Add an API token in Settings → Integrations → Kaneo.",
-    });
+    if (!accountsResolved) {
+      mountSpinner(root, { label: "Loading Kaneo" });
+      return;
+    }
+    showSignIn();
     return;
   }
 
@@ -787,7 +818,6 @@ host.onReady((ctx) => {
   document.body.dataset.theme = ctx.theme.mode;
   document.body.dataset.surface = ctx.surface;
   state.ready = ctx;
-  state.connected = ctx.connection.connected;
 
   // Seed the tab and the draft from the opening item only once; a later
   // `onReady` is a theme or session update and must not reset the user's tab.
@@ -802,26 +832,24 @@ host.onReady((ctx) => {
   }
 
   render();
-  // Without a token every call answers 401, so the picker stays on the connect
-  // screen instead of flashing an error banner.
+  // The connection is the local service's token, not a host integration, so it
+  // is read once here and again after a sign-in.
+  if (!accountsResolved && !accountsChecking) {
+    accountsChecking = true;
+    void refreshConnection();
+  }
+});
+
+async function refreshConnection(): Promise<void> {
+  state.connected = Boolean((await kaneoAccount().catch(() => null))?.connected);
+  accountsChecking = false;
+  accountsResolved = true;
+  render();
   if (state.connected && !loaded) {
     loaded = true;
     void load();
   }
-});
-
-host.onConnection((connection) => {
-  const wasConnected = state.connected;
-  state.connected = connection.connected;
-  if (wasConnected === connection.connected) return;
-  render();
-  // A transition to connected is the one time after the first load the data
-  // may be stale; `loaded` keeps the initial `onConnection` from doubling it.
-  if (connection.connected) {
-    loaded = true;
-    void load();
-  }
-});
+}
 
 /** The dialog can be resized; below the breakpoint the panes stack. */
 function observeWidth(): void {

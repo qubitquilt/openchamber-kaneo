@@ -46,6 +46,8 @@ export interface Preferences {
   labelFilter: string | null;
   /** Whether "Start session" creates a worktree, like Linear's toggle. */
   createInWorktree: boolean;
+  /** The Kaneo server the panel signs in against. Empty means the bundled origin. */
+  serverUrl: string;
 }
 
 const PREFERENCES_KEY = "preferences";
@@ -61,6 +63,7 @@ const DEFAULTS: Preferences = {
   assigneeFilter: "any",
   labelFilter: null,
   createInWorktree: false,
+  serverUrl: "",
 };
 
 function sanitize(raw: unknown): Preferences {
@@ -79,6 +82,7 @@ function sanitize(raw: unknown): Preferences {
     assigneeFilter: value.assigneeFilter === "me" ? "me" : "any",
     labelFilter: typeof value.labelFilter === "string" ? value.labelFilter : null,
     createInWorktree: value.createInWorktree === true,
+    serverUrl: typeof value.serverUrl === "string" ? value.serverUrl : "",
   };
 }
 

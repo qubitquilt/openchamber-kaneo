@@ -101,9 +101,11 @@ async function readCache(): Promise<CacheEntry | null> {
     (raw) => {
       if (!raw || typeof raw !== "object") return null;
       const entry = raw as Partial<CacheEntry>;
-      if (typeof entry.at !== "number" || !entry.context || typeof entry.context !== "object") return null;
+      if (typeof entry.at !== "number" || !entry.context || typeof entry.context !== "object")
+        return null;
       const contextRaw = entry.context as Partial<WorkspaceContext>;
-      if (!Array.isArray(contextRaw.workspaces) || typeof contextRaw.workspaceId !== "string") return null;
+      if (!Array.isArray(contextRaw.workspaces) || typeof contextRaw.workspaceId !== "string")
+        return null;
       // Reconstruct the error from its serialized message so it never arrives as an empty object.
       const reconstructed: WorkspaceContext = {
         user: contextRaw.user ?? null,
@@ -124,7 +126,9 @@ async function writeCache(context: WorkspaceContext): Promise<void> {
     {
       at: Date.now(),
       context,
-      errorMessage: context.projectsError ? String(context.projectsError.message ?? context.projectsError) : undefined,
+      errorMessage: context.projectsError
+        ? String(context.projectsError.message ?? context.projectsError)
+        : undefined,
     },
     host.storage,
   );

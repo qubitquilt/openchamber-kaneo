@@ -1,3 +1,4 @@
+import { host } from "./host";
 import { read, write } from "./storage";
 import type { Priority } from "./constants";
 import { PRIORITY_RANK } from "./constants";
@@ -58,12 +59,12 @@ function sanitize(raw: unknown): Preferences {
 }
 
 export async function loadPreferences(): Promise<Preferences> {
-  return read(PREFERENCES_KEY, (raw) => sanitize(raw));
+  return read(PREFERENCES_KEY, (raw) => sanitize(raw), host.storage);
 }
 
 export async function savePreferences(next: Partial<Preferences>): Promise<Preferences> {
   const merged = sanitize({ ...(await loadPreferences()), ...next });
-  await write(PREFERENCES_KEY, merged);
+  await write(PREFERENCES_KEY, merged, host.storage);
   return merged;
 }
 
@@ -77,7 +78,7 @@ const SESSION_LINKS_KEY = "session-links";
 export type { SessionLink } from "./session-links";
 
 export async function loadSessionLinks(): Promise<Record<string, SessionLink>> {
-  return read(SESSION_LINKS_KEY, sanitizeSessionLinks);
+  return read(SESSION_LINKS_KEY, sanitizeSessionLinks, host.storage);
 }
 
 export async function rememberSession(
@@ -89,7 +90,7 @@ export async function rememberSession(
   // The previous code pruned a copy taken before it deleted anything, so the
   // oldest never actually fell off; prune the whole record and store that.
   const kept = pruneSessionLinks(links);
-  await write(SESSION_LINKS_KEY, kept);
+  await write(SESSION_LINKS_KEY, kept, host.storage);
 }
 
 export async function markSessionPosted(sessionId: string, phase: string): Promise<void> {
@@ -97,5 +98,5 @@ export async function markSessionPosted(sessionId: string, phase: string): Promi
   const link = links[sessionId];
   if (!link) return;
   if (!link.posted.includes(phase)) link.posted.push(phase);
-  await write(SESSION_LINKS_KEY, links);
+  await write(SESSION_LINKS_KEY, links, host.storage);
 }

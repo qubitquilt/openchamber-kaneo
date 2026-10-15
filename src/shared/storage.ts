@@ -1,20 +1,30 @@
-import { host } from "./host";
+/** Minimal storage interface so tests can inject a mock. */
+export interface StorageStore {
+  get(key: string): Promise<unknown> | unknown;
+  set(key: string, value: unknown): Promise<void> | void;
+  delete(key: string): Promise<void> | void;
+}
 
 /** Shared storage helpers used by preferences and workspace. Every read passes
  * through a sanitizer; every write strips non-JSON values. */
-export async function read<T>(key: string, sanitize: (raw: unknown) => T): Promise<T> {
+export async function read<T>(
+  key: string,
+  sanitize: (raw: unknown) => T,
+  store: StorageStore,
+): Promise<T> {
   try {
-    return sanitize(await host.storage.get(key));
-  } catch {
+    return sanitize(await store.get(key));
+  } catch (e) {
+    console.warn(`Storage read failed for key "${key}":`, e);
     return sanitize(undefined);
   }
 }
 
-export async function write<T>(key: string, value: T): Promise<void> {
+export async function write<T>(key: string, value: T, store: StorageStore): Promise<void> {
   try {
     const plain = JSON.parse(JSON.stringify(value));
-    await host.storage.set(key, plain);
-  } catch {
-    // Storage is a convenience. A full namespace must not break a surface.
+    await store.set(key, plain);
+  } catch (e) {
+    console.warn(`Storage write failed for key "${key}":`, e);
   }
 }

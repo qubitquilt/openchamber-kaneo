@@ -157,11 +157,11 @@ the panel.
 
 ### Side panel (rail view)
 
-![Side panel showing task list with filters and project selection](screenshot-side-panel.png)
+![Side panel showing task list with filters and project selection](assets/screenshot-side-panel.png)
 
 ### Picker / attach modal
 
-![Modal picker with search, preview, and attach actions](screenshot-modal-panel.png)
+![Modal picker with search, preview, and attach actions](assets/screenshot-modal-panel.png)
 
 ## Contributing
 

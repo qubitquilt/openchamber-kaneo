@@ -94,17 +94,21 @@ interface CacheEntry {
 }
 
 async function readCache(): Promise<CacheEntry | null> {
-  return read(CACHE_KEY, (raw) => {
-    if (!raw || typeof raw !== "object") return null;
-    const entry = raw as Partial<CacheEntry>;
-    return entry && typeof entry.at === "number" && entry.context ? (entry as CacheEntry) : null;
-  });
+  return read(
+    CACHE_KEY,
+    (raw) => {
+      if (!raw || typeof raw !== "object") return null;
+      const entry = raw as Partial<CacheEntry>;
+      return entry && typeof entry.at === "number" && entry.context ? (entry as CacheEntry) : null;
+    },
+    host.storage,
+  );
 }
 
 async function writeCache(context: WorkspaceContext): Promise<void> {
   // Serializing and parsing again hands the host a plain object, which is what
   // its `JsonValue` parameter requires; the interface itself stays typed.
-  await write(CACHE_KEY, { at: Date.now(), context });
+  await write(CACHE_KEY, { at: Date.now(), context }, host.storage);
 }
 
 export async function invalidateBootstrapCache(): Promise<void> {

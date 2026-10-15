@@ -1,41 +1,14 @@
-import { host } from "./host";
+import { read, write } from "./storage";
 import type { Priority } from "./constants";
 import { PRIORITY_RANK } from "./constants";
 import { pruneSessionLinks, sanitizeSessionLinks, type SessionLink } from "./session-links";
 
-/**
- * One place that talks to `host.storage`. Every read passes its raw value
- * through a sanitizer so a hand-edited storage blob from outside the extension
- * cannot inject a novel value; every write goes through `JSON.parse(JSON.stringify)`
- * to strip functions, `Map`s and `Date`s that the SDK's `JsonValue` shape would
- * reject. A future key only has to be added in one place, not in four
- * try/catch blocks.
- */
-async function read<T>(key: string, sanitize: (raw: unknown) => T): Promise<T> {
-  try {
-    return sanitize(await host.storage.get(key));
-  } catch {
-    return sanitize(undefined);
-  }
-}
-
-async function write<T>(key: string, value: T): Promise<void> {
-  try {
-    const plain = JSON.parse(JSON.stringify(value));
-    await host.storage.set(key, plain);
-  } catch {
-    // Storage is a convenience. A full namespace must not break the panel.
-  }
-}
-
 /** Selection persisted between surfaces, kept in the extension's own storage. */
 export interface Preferences {
-  [key: string]: string | null | boolean;
   workspaceId: string | null;
   projectId: string | null;
   /** Task shown in the panel's detail sheet, shared with the board page. */
   openTaskId: string | null;
-  groupBy: "column" | "flat";
   priorityFilter: Priority | "any";
   /** Column slug filter, `null` for every column. */
   statusFilter: string | null;
@@ -56,7 +29,6 @@ const DEFAULTS: Preferences = {
   workspaceId: null,
   projectId: null,
   openTaskId: null,
-  groupBy: "column",
   priorityFilter: "any",
   statusFilter: null,
   view: "list",
@@ -75,7 +47,6 @@ function sanitize(raw: unknown): Preferences {
     workspaceId: typeof value.workspaceId === "string" ? value.workspaceId : null,
     projectId: typeof value.projectId === "string" ? value.projectId : null,
     openTaskId: typeof value.openTaskId === "string" ? value.openTaskId : null,
-    groupBy: value.groupBy === "flat" ? "flat" : "column",
     priorityFilter: knownPriority ? (priority as Priority | "any") : "any",
     statusFilter: typeof value.statusFilter === "string" ? value.statusFilter : null,
     view: value.view === "kanban" || value.view === "mine" ? value.view : "list",

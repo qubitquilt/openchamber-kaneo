@@ -11,7 +11,8 @@ import {
   mountTabs,
 } from "@openchamber/sdk/ui";
 
-import { KaneoError, createKaneoClient } from "../shared/client";
+import { createKaneoClient } from "../shared/client";
+import { describeAndLog } from "../shared/errors";
 import { PRIORITIES, PRIORITY_RANK, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
@@ -88,7 +89,6 @@ const state: BoardState = {
     workspaceId: null,
     projectId: null,
     openTaskId: null,
-    groupBy: "column",
     priorityFilter: "any",
     statusFilter: null,
     view: "list",
@@ -111,12 +111,6 @@ let renderToken = 0;
 /** `onReady` repeats on theme and session changes; only the first one loads. */
 let booted = false;
 
-function describe(error: unknown): string {
-  if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
 /** The menu label for the signed-in account. Prefers the host's `account`, then the loaded user. */
 function accountLabel(): string {
   const fromHost = state.ready?.connection?.account?.trim();
@@ -124,18 +118,6 @@ function accountLabel(): string {
   const fromUser = state.context?.user?.email?.trim();
   if (fromUser) return fromUser;
   return "Kaneo account";
-}
-
-/**
- * Describe an error and log the full value to the console. The banner only
- * carries the code and a short message; a `KaneoError.message` is the server's
- * response text and can include internal paths or, with a future server bug,
- * another tenant's data. The full value is for the developer, in their
- * DevTools console, not for the user.
- */
-function describeAndLog(action: string, error: unknown): string {
-  console.error(`${action} failed:`, error);
-  return describe(error);
 }
 
 function ticketFor(task: BoardTask): string {

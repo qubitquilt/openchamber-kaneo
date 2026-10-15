@@ -1,32 +1,8 @@
 import { API_ORIGIN } from "./constants";
 import { host } from "./host";
 import { loadPreferences, savePreferences } from "./preferences";
+import { read, write } from "./storage";
 import type { CurrentUser, ProjectListItem, Workspace } from "./types";
-
-/**
- * One place that talks to `host.storage`. Every read passes its raw value
- * through a sanitizer so a hand-edited storage blob from outside the extension
- * cannot inject a novel value; every write goes through `JSON.parse(JSON.stringify)`
- * to strip functions, `Map`s and `Date`s that the SDK's `JsonValue` shape would
- * reject. A future key only has to be added in one place, not in four
- * try/catch blocks.
- */
-async function read<T>(key: string, sanitize: (raw: unknown) => T): Promise<T> {
-  try {
-    return sanitize(await host.storage.get(key));
-  } catch {
-    return sanitize(undefined);
-  }
-}
-
-async function write<T>(key: string, value: T): Promise<void> {
-  try {
-    const plain = JSON.parse(JSON.stringify(value));
-    await host.storage.set(key, plain);
-  } catch {
-    // Storage is a convenience. A full namespace must not break the panel.
-  }
-}
 
 export interface WorkspaceContext {
   user: CurrentUser | null;

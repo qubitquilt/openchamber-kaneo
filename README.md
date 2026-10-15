@@ -153,6 +153,16 @@ the panel.
   that outlives every open Kaneo surface posts no further comments, because the watcher lives in the
   surface, unlike Linear's server-side event hub.
 
+## Screenshots
+
+### Side panel (rail view)
+
+![Side panel showing task list with filters and project selection](screenshot-side-panel.png)
+
+### Picker / attach modal
+
+![Modal picker with search, preview, and attach actions](screenshot-modal-panel.png)
+
 ## Contributing
 
 PRs run `npm run check` in CI, which lints, typechecks, checks the manifest, builds and tests. A

@@ -19,7 +19,8 @@ import {
   mountTextField,
 } from "@openchamber/sdk/ui";
 
-import { KaneoError, createKaneoClient } from "../shared/client";
+import { createKaneoClient } from "../shared/client";
+import { describeAndLog } from "../shared/errors";
 import { PRIORITIES, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
@@ -153,24 +154,6 @@ async function onSignedIn(): Promise<void> {
   state.connected = true;
   loaded = true;
   await load();
-}
-
-function describe(error: unknown): string {
-  if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-/**
- * Describe an error and log the full value to the console. The banner only
- * carries the code and a short message; a `KaneoError.message` is the server's
- * response text and can include internal paths or, with a future server bug,
- * another tenant's data. The full value is for the developer, in their
- * DevTools console, not for the user.
- */
-function describeAndLog(action: string, error: unknown): string {
-  console.error(`${action} failed:`, error);
-  return describe(error);
 }
 
 function ticketFor(task: BoardTask): string {

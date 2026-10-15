@@ -1,7 +1,7 @@
 import { API_ORIGIN } from "./constants";
 import { host } from "./host";
 import { loadPreferences, savePreferences } from "./preferences";
-import { read, write } from "./storage";
+import { deleteStorage, read, write } from "./storage";
 import type { CurrentUser, ProjectListItem, Workspace } from "./types";
 
 export interface WorkspaceContext {
@@ -91,6 +91,8 @@ const CACHE_TTL_MS = 60_000;
 interface CacheEntry {
   at: number;
   context: WorkspaceContext;
+  /** Serialized form of the error, reconstructed on read. */
+  errorMessage?: string;
 }
 
 async function readCache(): Promise<CacheEntry | null> {
@@ -99,24 +101,37 @@ async function readCache(): Promise<CacheEntry | null> {
     (raw) => {
       if (!raw || typeof raw !== "object") return null;
       const entry = raw as Partial<CacheEntry>;
-      return entry && typeof entry.at === "number" && entry.context ? (entry as CacheEntry) : null;
+      if (typeof entry.at !== "number" || !entry.context || typeof entry.context !== "object") return null;
+      const contextRaw = entry.context as Partial<WorkspaceContext>;
+      if (!Array.isArray(contextRaw.workspaces) || typeof contextRaw.workspaceId !== "string") return null;
+      // Reconstruct the error from its serialized message so it never arrives as an empty object.
+      const reconstructed: WorkspaceContext = {
+        user: contextRaw.user ?? null,
+        workspaces: (contextRaw.workspaces ?? []) as Workspace[],
+        workspaceId: contextRaw.workspaceId,
+        projects: (contextRaw.projects ?? []) as ProjectListItem[],
+        projectsError: entry.errorMessage ? new Error(entry.errorMessage) : null,
+      };
+      return { at: entry.at, context: reconstructed } as CacheEntry;
     },
     host.storage,
   );
 }
 
 async function writeCache(context: WorkspaceContext): Promise<void> {
-  // Serializing and parsing again hands the host a plain object, which is what
-  // its `JsonValue` parameter requires; the interface itself stays typed.
-  await write(CACHE_KEY, { at: Date.now(), context }, host.storage);
+  await write(
+    CACHE_KEY,
+    {
+      at: Date.now(),
+      context,
+      errorMessage: context.projectsError ? String(context.projectsError.message ?? context.projectsError) : undefined,
+    },
+    host.storage,
+  );
 }
 
 export async function invalidateBootstrapCache(): Promise<void> {
-  try {
-    await host.storage.delete(CACHE_KEY);
-  } catch {
-    // Nothing to do if it is already gone.
-  }
+  await deleteStorage(CACHE_KEY, host.storage);
 }
 
 /**

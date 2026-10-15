@@ -12,11 +12,21 @@ export async function read<T>(
   sanitize: (raw: unknown) => T,
   store: StorageStore,
 ): Promise<T> {
+  let raw: unknown;
   try {
-    return sanitize(await store.get(key));
+    raw = await store.get(key);
   } catch (e) {
     console.warn(`Storage read failed for key "${key}":`, e);
     return sanitize(undefined);
+  }
+  return sanitize(raw);
+}
+
+export async function deleteStorage(key: string, store: StorageStore): Promise<void> {
+  try {
+    await store.delete(key);
+  } catch (e) {
+    console.warn(`Storage delete failed for key "${key}":`, e);
   }
 }
 

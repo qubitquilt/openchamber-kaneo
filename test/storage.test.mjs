@@ -9,7 +9,7 @@ function mockStore() {
     get: async (key) => data.get(key),
     set: async (key, value) => data.set(key, value),
     delete: async (key) => data.delete(key),
-    _data: () => new Map(data),
+    snapshot: () => new Map(data),
   };
 }
 
@@ -30,14 +30,22 @@ test("read returns sanitized fallback when store is empty", async () => {
   assert.equal(result, "fallback");
 });
 
-test("write stores plain JSON in mock store", async () => {
+test("write strips non-JSON values before storing", async () => {
   const store = mockStore();
-  await write("key", { a: 1 }, store);
-  const value = await store.get("key");
+  const payload = { a: 1, fn: () => {}, missing: undefined };
+  await write("stripped", payload, store);
+  const value = await store.get("stripped");
   assert.deepStrictEqual(value, { a: 1 });
 });
 
-test("read logs silently but returns fallback on store failure", async () => {
+test("read passes identity sanitizer unchanged", async () => {
+  const store = mockStore();
+  await store.set("raw", { b: 2, extra: "value" });
+  const result = await read("raw", (raw) => raw, store);
+  assert.deepStrictEqual(result, { b: 2, extra: "value" });
+});
+
+test("read warns on store failure and returns fallback", async () => {
   const badStore = {
     get: async () => {
       throw new Error("store broken");
@@ -47,4 +55,15 @@ test("read logs silently but returns fallback on store failure", async () => {
   };
   const result = await read("bad", (raw) => (raw === undefined ? "default" : "other"), badStore);
   assert.equal(result, "default");
+});
+
+test("write warns on store failure", async () => {
+  const badStore = {
+    get: async () => undefined,
+    set: async () => {
+      throw new Error("write broken");
+    },
+    delete: async () => {},
+  };
+  await assert.doesNotReject(async () => await write("bad", { a: 1 }, badStore));
 });

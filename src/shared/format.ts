@@ -221,7 +221,6 @@ export function sessionComment(
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
-const DAY_MS2 = 86_400_000;
 
 /**
  * "just now / 5m / 3h / 2d / 5w", the way the OpenChamber reference rows show
@@ -237,9 +236,9 @@ export function relativeTimeOf(
   const elapsed = Math.max(0, now - at);
   if (elapsed < MINUTE_MS) return "just now";
   if (elapsed < HOUR_MS) return `${Math.floor(elapsed / MINUTE_MS)}m`;
-  if (elapsed < DAY_MS2) return `${Math.floor(elapsed / HOUR_MS)}h`;
-  if (elapsed < 7 * DAY_MS2) return `${Math.floor(elapsed / DAY_MS2)}d`;
-  return `${Math.floor(elapsed / (7 * DAY_MS2))}w`;
+  if (elapsed < DAY_MS) return `${Math.floor(elapsed / HOUR_MS)}h`;
+  if (elapsed < 7 * DAY_MS) return `${Math.floor(elapsed / DAY_MS)}d`;
+  return `${Math.floor(elapsed / (7 * DAY_MS))}w`;
 }
 
 export type ColumnGlyph = "blank" | "progress" | "review" | "done";

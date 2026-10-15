@@ -12,7 +12,8 @@ zip install. Run `npm run check`, which lints, typechecks, checks the manifest, 
 
 ```
 src/shared/     code every surface shares: the API client, the service transport and sign-in, chip
-                builders, preferences, stylesheet
+                builders, preferences, stylesheet, storage helpers (`storage.ts`), error formatting
+                (`errors.ts`), and the workspace bootstrap (`workspace.ts`)
 src/service/    the local service      -> service/main.js (Node)
 src/panel/      the rail panel        -> panel/main.js
 src/page/       the full-screen board -> panel/page.js

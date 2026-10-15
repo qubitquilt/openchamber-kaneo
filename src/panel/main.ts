@@ -11,7 +11,8 @@ import {
   mountSpinner,
 } from "@openchamber/sdk/ui";
 
-import { KaneoError, createKaneoClient } from "../shared/client";
+import { createKaneoClient } from "../shared/client";
+import { describeAndLog } from "../shared/errors";
 import { PRIORITIES, PRIORITY_RANK, PROVIDER_ID, type Priority } from "../shared/constants";
 import { clear, el } from "../shared/dom";
 import { host } from "../shared/host";
@@ -83,7 +84,6 @@ const state: PanelState = {
     workspaceId: null,
     projectId: null,
     openTaskId: null,
-    groupBy: "column",
     priorityFilter: "any",
     statusFilter: null,
     view: "list",
@@ -101,24 +101,6 @@ const state: PanelState = {
 let renderToken = 0;
 /** `onReady` repeats on theme and session changes; only the first one loads. */
 let booted = false;
-
-function describe(error: unknown): string {
-  if (error instanceof KaneoError) return `${error.code}: ${error.message}`;
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-/**
- * Describe an error and log the full value to the console. The banner only
- * carries the code and a short message; a `KaneoError.message` is the server's
- * response text and can include internal paths or, with a future server bug,
- * another tenant's data. The full value is for the developer, in their
- * DevTools console, not for the user.
- */
-function describeAndLog(action: string, error: unknown): string {
-  console.error(`${action} failed:`, error);
-  return describe(error);
-}
 
 /* --------------------------------------------------------------- filtering */
 
